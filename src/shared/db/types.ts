@@ -2,6 +2,9 @@
 
 export type TaskStatus = 'running' | 'completed' | 'error' | 'stopped';
 
+// App mode - Work for general tasks, Code for coding tasks
+export type AppMode = 'work' | 'code';
+
 // Session represents a conversation context that can contain multiple tasks
 export interface Session {
   id: string; // Format: YYYYMMDDHHmmss_slug
@@ -20,6 +23,7 @@ export interface Task {
   cost: number | null;
   duration: number | null;
   favorite?: boolean; // Whether task is favorited
+  mode?: AppMode; // App mode when task was created (work/code)
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +63,7 @@ export interface CreateTaskInput {
   session_id: string;
   task_index: number;
   prompt: string;
+  mode?: AppMode;
 }
 
 export interface CreateMessageInput {
@@ -80,6 +85,7 @@ export interface UpdateTaskInput {
   duration?: number;
   prompt?: string;
   favorite?: boolean;
+  mode?: AppMode;
 }
 
 // Library file types

@@ -50,6 +50,7 @@ interface LocationState {
   sessionId?: string;
   taskIndex?: number;
   attachments?: MessageAttachment[];
+  mode?: 'work' | 'code';
 }
 
 // Context for tool selection - allows child components to select tools
@@ -91,6 +92,7 @@ function TaskDetailContent() {
   const initialSessionId = state?.sessionId;
   const initialTaskIndex = state?.taskIndex || 1;
   const initialAttachments = state?.attachments;
+  const initialMode = state?.mode || 'work';
 
   const {
     messages,
@@ -108,9 +110,10 @@ function TaskDetailContent() {
     respondToQuestion,
     sessionFolder,
     filesVersion,
+    setFilesVersion,
     backgroundTasks,
   } = useAgent();
-  const { toggleLeft, setLeftOpen } = useSidebar();
+  const { toggleLeft, setLeftOpen, rightOpen, setRightOpen } = useSidebar();
   const [hasStarted, setHasStarted] = useState(false);
   const isInitializingRef = useRef(false); // Prevent double initialization in Strict Mode
   const [task, setTask] = useState<Task | null>(null);
@@ -120,8 +123,7 @@ function TaskDetailContent() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevTaskIdRef = useRef<string | undefined>(undefined);
 
-  // Panel visibility state - default to collapsed, auto-expand when content is available
-  const [isRightSidebarVisible, setIsRightSidebarVisible] = useState(false);
+  // Preview panel visibility state
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
 
   // Scroll to bottom button state
@@ -131,12 +133,18 @@ function TaskDetailContent() {
   // Track last scroll position to detect scroll direction
   const lastScrollTopRef = useRef(0);
 
-  // Auto-collapse left sidebar only when preview panel opens
+  // Auto-collapse sidebars when preview panel opens, expand when closes
   useEffect(() => {
     if (isPreviewVisible) {
+      // Collapse both sidebars to give more space to preview
       setLeftOpen(false);
+      setRightOpen(false);
+    } else {
+      // Expand both sidebars when preview closes
+      setLeftOpen(true);
+      setRightOpen(true);
     }
-  }, [isPreviewVisible, setLeftOpen]);
+  }, [isPreviewVisible, setLeftOpen, setRightOpen]);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Artifact state
@@ -166,61 +174,13 @@ function TaskDetailContent() {
     return '';
   }, [sessionFolder, artifacts]);
 
-  // Track if sidebar has been auto-expanded (to avoid re-opening after manual close)
-  const hasAutoExpandedRef = useRef(false);
-
-  // Reset right sidebar state when switching tasks
+  // Reset loading state when switching tasks
   useEffect(() => {
     if (taskId !== prevTaskIdRef.current) {
-      // Reset auto-expand flag for new task
-      hasAutoExpandedRef.current = false;
-      // Close right sidebar when switching to a new task
-      setIsRightSidebarVisible(false);
-      // Set loading to true immediately to prevent auto-expand effect
-      // from using stale data from the previous task
+      // Set loading to true immediately to prevent stale data
       setIsLoading(true);
     }
   }, [taskId]);
-
-  // Auto-expand right sidebar when there is actual content (only once)
-  // Content includes: artifacts, working files, MCP tools, or skills
-  useEffect(() => {
-    // Skip if still loading - wait for task data to be ready
-    if (isLoading) return;
-
-    // Skip if task data not loaded yet or task doesn't match current taskId
-    // This prevents using stale data from the previous task during task switching
-    if (!task || task.id !== taskId) return;
-
-    // Skip if already auto-expanded
-    if (hasAutoExpandedRef.current) return;
-
-    // Check if there's actual content to display
-    const hasArtifacts = artifacts.length > 0;
-    const hasWorkspace = !!workingDir;
-    const hasFileOps = messages.some(
-      (m) =>
-        m.type === 'tool_use' &&
-        ['Read', 'Write', 'Edit', 'Bash', 'Glob'].includes(m.name || '')
-    );
-    const hasMcpTools = messages.some(
-      (m) => m.type === 'tool_use' && m.name?.startsWith('mcp__')
-    );
-    const hasSkills = messages.some(
-      (m) => m.type === 'tool_use' && m.name === 'Skill'
-    );
-
-    const hasContent =
-      hasArtifacts || (hasWorkspace && hasFileOps) || hasMcpTools || hasSkills;
-
-    // Auto-expand when content becomes available (only once)
-    if (hasContent) {
-      setIsRightSidebarVisible(true);
-      hasAutoExpandedRef.current = true;
-    }
-    // If no content, ensure sidebar stays collapsed (don't auto-expand)
-    // The sidebar starts collapsed by default and should stay that way for empty sessions
-  }, [artifacts.length, messages, workingDir, isLoading, task, taskId]);
 
   // Live preview state
   const {
@@ -319,7 +279,11 @@ function TaskDetailContent() {
   // Handle closing preview
   const handleClosePreview = useCallback(() => {
     setIsPreviewVisible(false);
-    setSelectedArtifact(null);
+    // Delay clearing artifact until after the collapse animation completes
+    // Using 350ms to ensure animation (300ms) is fully done
+    setTimeout(() => {
+      setSelectedArtifact(null);
+    }, 350);
   }, []);
 
   // Selected tool operation index for syncing with virtual computer
@@ -658,10 +622,6 @@ function TaskDetailContent() {
         setArtifacts([]);
         setSelectedToolIndex(null);
 
-        // Reset right sidebar state
-        setIsRightSidebarVisible(false);
-        hasAutoExpandedRef.current = false;
-
         // Stop live preview if running
         stopPreview();
       }
@@ -720,7 +680,7 @@ function TaskDetailContent() {
         const sessionInfo = initialSessionId
           ? { sessionId: initialSessionId, taskIndex: initialTaskIndex }
           : undefined;
-        await runAgent(initialPrompt, taskId, sessionInfo, initialAttachments);
+        await runAgent(initialPrompt, taskId, sessionInfo, initialAttachments, initialMode);
         const newTask = await loadTask(taskId);
         setTask(newTask);
       } else {
@@ -788,7 +748,7 @@ function TaskDetailContent() {
   return (
     <ToolSelectionContext.Provider value={toolSelectionValue}>
       <div className="bg-sidebar flex h-screen overflow-hidden">
-        {/* Left Sidebar */}
+        {/* Left Sidebar - Workspace Mode */}
         <LeftSidebar
           tasks={allTasks}
           currentTaskId={taskId}
@@ -799,6 +759,13 @@ function TaskDetailContent() {
             // Include current task if it's running
             ...(isRunning && taskId ? [taskId] : []),
           ]}
+          mode="workspace"
+          workspaceProps={{
+            sessionFolder: sessionFolder || undefined,
+            artifacts,
+            onSelectArtifact: handleSelectArtifact,
+            onFilesChanged: () => setFilesVersion((v) => v + 1),
+          }}
         />
 
         {/* Main Content Area with Responsive Layout */}
@@ -808,12 +775,7 @@ function TaskDetailContent() {
         >
           {/* Left Panel - Agent Chat (flex-1 to fill available space) */}
           <div
-            className={cn(
-              'bg-background flex min-w-0 flex-col overflow-hidden transition-all duration-200',
-              !isPreviewVisible && !isRightSidebarVisible && 'rounded-2xl',
-              !isPreviewVisible && isRightSidebarVisible && 'rounded-l-2xl',
-              isPreviewVisible && 'rounded-l-2xl'
-            )}
+            className="bg-background flex min-w-0 flex-col overflow-hidden rounded-l-2xl transition-all duration-300"
             style={{
               flex: isPreviewVisible ? '0 0 auto' : '1 1 0%',
               width: isPreviewVisible ? 'clamp(320px, 40%, 500px)' : undefined,
@@ -864,36 +826,14 @@ function TaskDetailContent() {
                   <span className="bg-primary size-2 animate-pulse rounded-full" />
                 </span>
               )}
-
-              {/* Toggle right sidebar button */}
-              <button
-                onClick={() => setIsRightSidebarVisible(!isRightSidebarVisible)}
-                className={cn(
-                  'text-muted-foreground hover:bg-accent hover:text-foreground flex cursor-pointer items-center justify-center rounded-lg p-2 transition-colors',
-                  isRightSidebarVisible && 'bg-accent/50'
-                )}
-                title={isRightSidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
-              >
-                <PanelLeft className="size-4 rotate-180" />
-              </button>
             </header>
 
-            {/* Messages Area - Centered content when sidebar hidden */}
+            {/* Messages Area */}
             <div
               ref={messagesContainerRef}
-              className={cn(
-                'relative flex-1 overflow-x-hidden overflow-y-auto',
-                !isPreviewVisible &&
-                  !isRightSidebarVisible &&
-                  'flex justify-center'
-              )}
+              className="relative flex-1 overflow-x-hidden overflow-y-auto"
             >
-              <div
-                className={cn(
-                  'w-full px-6 pt-4 pb-24',
-                  !isPreviewVisible && !isRightSidebarVisible && 'max-w-[800px]'
-                )}
-              >
+              <div className="w-full px-6 pt-4 pb-24">
                 {isLoading ? (
                   <div className="flex min-h-[200px] items-center justify-center py-12">
                     <div className="text-muted-foreground flex items-center gap-3">
@@ -935,15 +875,8 @@ function TaskDetailContent() {
               </div>
             </div>
 
-            {/* Reply Input - Centered when sidebar hidden */}
-            <div
-              className={cn(
-                'border-border/50 bg-background relative shrink-0 border-none',
-                !isPreviewVisible &&
-                  !isRightSidebarVisible &&
-                  'flex justify-center'
-              )}
-            >
+            {/* Reply Input */}
+            <div className="border-border/50 bg-background relative shrink-0 border-none">
               {/* Scroll to bottom button - fixed above input */}
               {showScrollButton && (
                 <button
@@ -954,12 +887,7 @@ function TaskDetailContent() {
                   <ArrowDown className="size-4" />
                 </button>
               )}
-              <div
-                className={cn(
-                  'w-full px-4 py-3',
-                  !isPreviewVisible && !isRightSidebarVisible && 'max-w-[800px]'
-                )}
-              >
+              <div className="w-full px-4 py-3">
                 <ChatInput
                   variant="reply"
                   placeholder={t.home.reply}
@@ -972,39 +900,42 @@ function TaskDetailContent() {
           </div>
 
           {/* Divider between chat and preview */}
-          {isPreviewVisible && <div className="bg-border/50 w-px shrink-0" />}
-
-          {/* Middle Panel - Artifact Preview (only shown when artifact selected) */}
-          {isPreviewVisible && (
-            <div className="bg-muted/10 flex min-w-0 flex-1 flex-col overflow-hidden">
-              <ArtifactPreview
-                artifact={selectedArtifact}
-                onClose={handleClosePreview}
-                allArtifacts={artifacts}
-                livePreviewUrl={livePreviewUrl}
-                livePreviewStatus={livePreviewStatus}
-                livePreviewError={livePreviewError}
-                onStartLivePreview={
-                  workingDir ? handleStartLivePreview : undefined
-                }
-                onStopLivePreview={handleStopLivePreview}
-              />
-            </div>
-          )}
-
-          {/* Divider between preview/chat and sidebar */}
           <div
             className={cn(
               'bg-border/50 shrink-0 transition-all duration-300',
-              isRightSidebarVisible ? 'w-px' : 'w-0'
+              isPreviewVisible ? 'w-px' : 'w-0'
             )}
           />
 
-          {/* Right Panel - Progress, Artifacts, Context (fixed width) */}
+          {/* Middle Panel - Artifact Preview (width-controlled for smooth transition) */}
+          <div
+            className={cn(
+              'bg-muted/10 flex flex-col overflow-hidden transition-all duration-300',
+              isPreviewVisible ? 'min-w-0 flex-1 opacity-100' : 'w-0 opacity-0'
+            )}
+          >
+            <ArtifactPreview
+              artifact={selectedArtifact}
+              onClose={handleClosePreview}
+              allArtifacts={artifacts}
+              livePreviewUrl={livePreviewUrl}
+              livePreviewStatus={livePreviewStatus}
+              livePreviewError={livePreviewError}
+              onStartLivePreview={
+                workingDir ? handleStartLivePreview : undefined
+              }
+              onStopLivePreview={handleStopLivePreview}
+            />
+          </div>
+
+          {/* Divider between preview/chat and sidebar */}
+          <div className="bg-border/50 w-px shrink-0" />
+
+          {/* Right Panel - Progress, Artifacts, Context (collapsible) */}
           <div
             className={cn(
               'bg-background flex shrink-0 flex-col overflow-hidden rounded-r-2xl transition-all duration-300',
-              isRightSidebarVisible ? 'w-[280px]' : 'w-0'
+              rightOpen ? 'w-[280px]' : 'w-14'
             )}
           >
             <RightSidebar
@@ -1016,6 +947,7 @@ function TaskDetailContent() {
               workingDir={workingDir}
               sessionFolder={sessionFolder || undefined}
               filesVersion={filesVersion}
+              hideWorkspace={true}
             />
           </div>
         </div>

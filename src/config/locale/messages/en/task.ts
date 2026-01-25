@@ -1,6 +1,7 @@
 export default {
   progress: 'Progress',
   artifacts: 'Artifacts',
+  assets: 'Assets',
   context: 'Context',
   showSteps: 'Show {count} steps',
   hideSteps: 'Hide steps',
@@ -17,6 +18,8 @@ export default {
   outputsDesc: 'Outputs created during the task land here.',
   sessionDesc: 'Session files and attachments.',
   noFiles: 'No files yet',
+  workspaceEmpty: 'No files yet',
+  addFile: 'Add File',
   waitingForTask: 'Waiting for task execution...',
   noArtifacts: 'No artifacts yet',
   tools: 'Tools',

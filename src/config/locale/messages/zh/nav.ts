@@ -4,4 +4,7 @@ export default {
   noTasksYet: '暂无任务',
   settings: '设置',
   logOut: '退出登录',
+  workMode: 'Work',
+  codeMode: 'Code',
+  clickToSwitch: '点击切换',
 };

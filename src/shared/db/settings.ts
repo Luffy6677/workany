@@ -7,6 +7,7 @@
 import { API_BASE_URL } from '@/config';
 
 import { getAppDataDir, getMcpConfigPath } from '../lib/paths';
+import type { AppMode } from './types';
 
 export interface AIProvider {
   id: string;
@@ -226,6 +227,9 @@ export interface Settings {
   accentColor: AccentColor;
   backgroundStyle: BackgroundStyle;
   language: string;
+
+  // App mode (Work/Code)
+  appMode: AppMode;
 }
 
 // ============================================================================
@@ -362,6 +366,7 @@ export const defaultSettings: Settings = {
   accentColor: 'orange',
   backgroundStyle: 'default',
   language: '', // Empty string triggers system language detection on first run
+  appMode: 'work', // Default to Work mode
 };
 
 const DB_NAME = 'sqlite:workany.db';

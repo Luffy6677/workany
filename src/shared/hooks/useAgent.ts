@@ -368,6 +368,7 @@ export interface UseAgentReturn {
   sessionFolder: string | null;
   taskFolder: string | null; // Full path to current task folder (sessionFolder/task-XX)
   filesVersion: number; // Incremented when files are added (e.g., attachments saved)
+  setFilesVersion: React.Dispatch<React.SetStateAction<number>>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: PendingQuestion | null;
   // Two-phase planning
@@ -377,7 +378,8 @@ export interface UseAgentReturn {
     prompt: string,
     existingTaskId?: string,
     sessionInfo?: SessionInfo,
-    attachments?: MessageAttachment[]
+    attachments?: MessageAttachment[],
+    mode?: 'work' | 'code'
   ) => Promise<string>;
   approvePlan: () => Promise<void>;
   rejectPlan: () => void;
@@ -1482,7 +1484,8 @@ export function useAgent(): UseAgentReturn {
       prompt: string,
       existingTaskId?: string,
       sessionInfo?: SessionInfo,
-      attachments?: MessageAttachment[]
+      attachments?: MessageAttachment[],
+      mode?: 'work' | 'code'
     ): Promise<string> => {
       // If there's already a running task, move it to background
       if (isRunning && abortControllerRef.current && taskId) {
@@ -1542,12 +1545,15 @@ export function useAgent(): UseAgentReturn {
             session_id: sessId,
             task_index: taskIdx,
             prompt,
+            mode: mode || 'work',
           });
           console.log(
             '[useAgent] Created new task:',
             currentTaskId,
             'in session:',
-            sessId
+            sessId,
+            'mode:',
+            mode || 'work'
           );
         } else {
           console.log('[useAgent] Task already exists:', currentTaskId);
@@ -2328,6 +2334,7 @@ export function useAgent(): UseAgentReturn {
     sessionFolder,
     taskFolder,
     filesVersion,
+    setFilesVersion,
     pendingPermission,
     pendingQuestion,
     phase,

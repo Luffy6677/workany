@@ -294,6 +294,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     status: 'running',
     cost: null,
     duration: null,
+    mode: input.mode,
     created_at: now,
     updated_at: now,
   };
@@ -301,18 +302,26 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   const database = await getSQLiteDatabase();
 
   if (database) {
-    // SQLite (Tauri) - Try with new schema, fallback to old
+    // SQLite (Tauri) - Try with new schema including mode, fallback to older schemas
     try {
       await database.execute(
-        'INSERT INTO tasks (id, session_id, task_index, prompt) VALUES ($1, $2, $3, $4)',
-        [input.id, input.session_id, input.task_index, input.prompt]
+        'INSERT INTO tasks (id, session_id, task_index, prompt, mode) VALUES ($1, $2, $3, $4, $5)',
+        [input.id, input.session_id, input.task_index, input.prompt, input.mode || 'work']
       );
     } catch {
-      // Fallback for older schema without session_id
-      await database.execute('INSERT INTO tasks (id, prompt) VALUES ($1, $2)', [
-        input.id,
-        input.prompt,
-      ]);
+      // Try without mode column (older schema)
+      try {
+        await database.execute(
+          'INSERT INTO tasks (id, session_id, task_index, prompt) VALUES ($1, $2, $3, $4)',
+          [input.id, input.session_id, input.task_index, input.prompt]
+        );
+      } catch {
+        // Fallback for oldest schema without session_id
+        await database.execute('INSERT INTO tasks (id, prompt) VALUES ($1, $2)', [
+          input.id,
+          input.prompt,
+        ]);
+      }
     }
     const result = await getTask(input.id);
     if (!result) throw new Error('Failed to create task');
@@ -415,6 +424,10 @@ export async function updateTask(
       updates.push(`favorite = $${paramIndex++}`);
       values.push(input.favorite ? 1 : 0);
     }
+    if (input.mode !== undefined) {
+      updates.push(`mode = $${paramIndex++}`);
+      values.push(input.mode);
+    }
 
     if (updates.length > 0) {
       updates.push(`updated_at = datetime('now')`);
@@ -432,6 +445,18 @@ export async function updateTask(
         ) {
           await database.execute(
             'ALTER TABLE tasks ADD COLUMN favorite INTEGER DEFAULT 0'
+          );
+          await database.execute(
+            `UPDATE tasks SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+            values
+          );
+        } else if (
+          input.mode !== undefined &&
+          String(error).includes('mode')
+        ) {
+          // If mode column doesn't exist, add it and retry
+          await database.execute(
+            "ALTER TABLE tasks ADD COLUMN mode TEXT DEFAULT 'work'"
           );
           await database.execute(
             `UPDATE tasks SET ${updates.join(', ')} WHERE id = $${paramIndex}`,

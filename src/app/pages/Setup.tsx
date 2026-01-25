@@ -238,7 +238,7 @@ export function SetupPage({ onSkip }: SetupPageProps = {}) {
         {/* Header */}
         <div className="border-border border-b py-6">
           <h1 className="text-foreground text-2xl font-semibold">
-            {t.setup?.title || 'Welcome to WorkAny'}
+            {t.setup?.title || 'Welcome to SOLO-Demo'}
           </h1>
           <p className="text-muted-foreground mt-2">
             {t.setup?.subtitle ||

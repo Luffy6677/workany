@@ -33,9 +33,9 @@ export function AboutSettings() {
     <div className="space-y-6">
       {/* Product Info */}
       <div className="flex items-center gap-4">
-        <img src={ImageLogo} alt="WorkAny" className="size-16 rounded-xl" />
+        <img src={ImageLogo} alt="SOLO-Demo" className="size-16 rounded-xl" />
         <div>
-          <h2 className="text-foreground text-xl font-bold">WorkAny</h2>
+          <h2 className="text-foreground text-xl font-bold">SOLO-Demo</h2>
           <p className="text-muted-foreground text-sm">
             {t.settings.aiPlatform}
           </p>
@@ -104,7 +104,7 @@ export function AboutSettings() {
             }
             className="text-foreground hover:text-primary flex cursor-pointer items-center gap-1 text-sm font-medium transition-colors"
           >
-            WorkAny Community License
+            SOLO-Demo Community License
             <ExternalLink className="size-3" />
           </button>
         </div>

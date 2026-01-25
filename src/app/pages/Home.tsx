@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   createSession,
   deleteTask,
   getAllTasks,
+  getSettings,
+  saveSettings,
   updateTask,
+  type AppMode,
   type Task,
 } from '@/shared/db';
 import type { MessageAttachment } from '@/shared/hooks/useAgent';
@@ -30,6 +33,7 @@ function HomeContent() {
   const { t } = useLanguage();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([]);
+  const [appMode, setAppMode] = useState<AppMode>('work');
   const navigate = useNavigate();
 
   // Subscribe to background tasks
@@ -37,6 +41,19 @@ function HomeContent() {
     const unsubscribe = subscribeToBackgroundTasks(setBackgroundTasks);
     return unsubscribe;
   }, []);
+
+  // Load app mode from settings
+  useEffect(() => {
+    const settings = getSettings();
+    setAppMode(settings.appMode || 'work');
+  }, []);
+
+  // Handle app mode change
+  const handleAppModeChange = (mode: AppMode) => {
+    setAppMode(mode);
+    const settings = getSettings();
+    saveSettings({ ...settings, appMode: mode });
+  };
 
   // Load tasks for sidebar
   useEffect(() => {
@@ -50,6 +67,15 @@ function HomeContent() {
     }
     loadTasks();
   }, []);
+
+  // Filter tasks by current app mode
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      // Tasks without mode are treated as 'work' mode (legacy tasks)
+      const taskMode = task.mode || 'work';
+      return taskMode === appMode;
+    });
+  }, [tasks, appMode]);
 
   // Handle task deletion
   const handleDeleteTask = async (taskId: string) => {
@@ -94,7 +120,9 @@ function HomeContent() {
     const taskId = Date.now().toString();
     console.log(
       '[Home] Navigating with attachments:',
-      attachments?.length || 0
+      attachments?.length || 0,
+      'mode:',
+      appMode
     );
 
     navigate(`/task/${taskId}`, {
@@ -103,6 +131,7 @@ function HomeContent() {
         sessionId,
         taskIndex: 1,
         attachments,
+        mode: appMode, // Pass current app mode to task
       },
     });
   };
@@ -111,12 +140,14 @@ function HomeContent() {
     <div className="bg-sidebar flex h-screen overflow-hidden">
       {/* Left Sidebar */}
       <LeftSidebar
-        tasks={tasks}
+        tasks={filteredTasks}
         onDeleteTask={handleDeleteTask}
         onToggleFavorite={handleToggleFavorite}
         runningTaskIds={backgroundTasks
           .filter((t) => t.isRunning)
           .map((t) => t.taskId)}
+        appMode={appMode}
+        onAppModeChange={handleAppModeChange}
       />
 
       {/* Main Content */}

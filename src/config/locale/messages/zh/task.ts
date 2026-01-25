@@ -1,6 +1,7 @@
 export default {
   progress: '进度',
   artifacts: '产物',
+  assets: '资产',
   context: '上下文',
   showSteps: '显示 {count} 个步骤',
   hideSteps: '隐藏步骤',
@@ -17,6 +18,8 @@ export default {
   outputsDesc: '任务输出文件保存在此处',
   sessionDesc: '会话文件和附件',
   noFiles: '暂无文件',
+  workspaceEmpty: '暂无文件',
+  addFile: '添加文件',
   waitingForTask: '等待任务执行...',
   noArtifacts: '暂无输出产物',
   tools: '工具',

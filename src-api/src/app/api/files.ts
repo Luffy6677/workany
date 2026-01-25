@@ -17,6 +17,17 @@ const execAsync = promisify(exec);
 
 const files = new Hono();
 
+/**
+ * Expand ~ to home directory in path
+ */
+function expandTildePath(filePath: string): string {
+  if (filePath.startsWith('~/') || filePath === '~') {
+    const home = getHomeDir();
+    return filePath.replace(/^~/, home);
+  }
+  return filePath;
+}
+
 interface FileEntry {
   name: string;
   path: string;
@@ -178,14 +189,17 @@ files.post('/readdir', async (c) => {
       maxDepth?: number;
     }>();
 
-    const { path: dirPath, maxDepth = 3 } = body;
+    const { path: rawPath, maxDepth = 3 } = body;
 
-    if (!dirPath) {
+    if (!rawPath) {
       return c.json({ error: 'Path is required' }, 400);
     }
 
+    // Expand ~ to home directory
+    const dirPath = expandTildePath(rawPath);
+
     // Security check: only allow reading from home directory
-    const homedir = process.env.HOME || process.env.USERPROFILE || '';
+    const homedir = getHomeDir();
     if (!dirPath.startsWith(homedir) && !dirPath.startsWith('/tmp')) {
       return c.json(
         { error: 'Access denied: path must be within home directory' },
@@ -267,14 +281,17 @@ files.post('/stat', async (c) => {
 files.post('/read', async (c) => {
   try {
     const body = await c.req.json<{ path: string }>();
-    const { path: filePath } = body;
+    const { path: rawPath } = body;
 
-    if (!filePath) {
+    if (!rawPath) {
       return c.json({ error: 'Path is required' }, 400);
     }
 
+    // Expand ~ to home directory
+    const filePath = expandTildePath(rawPath);
+
     // Security check
-    const homedir = process.env.HOME || process.env.USERPROFILE || '';
+    const homedir = getHomeDir();
     if (!filePath.startsWith(homedir) && !filePath.startsWith('/tmp')) {
       return c.json({ error: 'Access denied' }, 403);
     }
@@ -346,14 +363,17 @@ files.get('/skills-dir', async (c) => {
 files.post('/read-binary', async (c) => {
   try {
     const body = await c.req.json<{ path: string }>();
-    const { path: filePath } = body;
+    const { path: rawPath } = body;
 
-    if (!filePath) {
+    if (!rawPath) {
       return c.json({ error: 'Path is required' }, 400);
     }
 
+    // Expand ~ to home directory
+    const filePath = expandTildePath(rawPath);
+
     // Security check
-    const homedir = process.env.HOME || process.env.USERPROFILE || '';
+    const homedir = getHomeDir();
     if (!filePath.startsWith(homedir) && !filePath.startsWith('/tmp')) {
       return c.json({ error: 'Access denied' }, 403);
     }
@@ -458,14 +478,17 @@ files.get('/detect-editor', async (c) => {
 files.post('/open-in-editor', async (c) => {
   try {
     const body = await c.req.json<{ path: string }>();
-    const { path: filePath } = body;
+    const { path: rawPath } = body;
 
-    if (!filePath) {
+    if (!rawPath) {
       return c.json({ error: 'Path is required' }, 400);
     }
 
+    // Expand ~ to home directory
+    const filePath = expandTildePath(rawPath);
+
     // Security check
-    const homedir = process.env.HOME || process.env.USERPROFILE || '';
+    const homedir = getHomeDir();
     if (!filePath.startsWith(homedir) && !filePath.startsWith('/tmp')) {
       return c.json({ error: 'Access denied' }, 403);
     }
@@ -604,6 +627,140 @@ files.post('/open', async (c) => {
     }
   } catch (error) {
     console.error('[Files API] Error:', error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+});
+
+/**
+ * Write binary file (base64 encoded)
+ * POST /files/write-binary
+ * Body: { path: string, content: string (base64) }
+ */
+files.post('/write-binary', async (c) => {
+  try {
+    const body = await c.req.json<{
+      path: string;
+      content: string; // base64 encoded
+    }>();
+    const { path: rawPath, content } = body;
+
+    if (!rawPath || !content) {
+      return c.json({ error: 'path and content are required' }, 400);
+    }
+
+    // Expand ~ to home directory
+    const filePath = expandTildePath(rawPath);
+
+    // Security check
+    const homedir = getHomeDir();
+    if (!filePath.startsWith(homedir) && !filePath.startsWith('/tmp')) {
+      return c.json(
+        { error: 'Access denied: path must be within home directory' },
+        403
+      );
+    }
+
+    // Ensure parent directory exists
+    const dir = path.dirname(filePath);
+    try {
+      await fs.mkdir(dir, { recursive: true });
+    } catch {
+      // Directory may already exist
+    }
+
+    // Decode base64 and write file
+    const buffer = Buffer.from(content, 'base64');
+    await fs.writeFile(filePath, buffer);
+
+    console.log(`[Files API] Wrote binary file: ${filePath} (${buffer.length} bytes)`);
+
+    return c.json({
+      success: true,
+      path: filePath,
+      size: buffer.length,
+    });
+  } catch (error) {
+    console.error('[Files API] Write binary error:', error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+});
+
+/**
+ * Copy file to destination directory
+ * POST /files/copy
+ * Body: { sourcePath: string, destDir: string, fileName?: string }
+ */
+files.post('/copy', async (c) => {
+  try {
+    const body = await c.req.json<{
+      sourcePath: string;
+      destDir: string;
+      fileName?: string;
+    }>();
+    const { sourcePath: rawSourcePath, destDir: rawDestDir, fileName } = body;
+
+    if (!rawSourcePath || !rawDestDir) {
+      return c.json({ error: 'sourcePath and destDir are required' }, 400);
+    }
+
+    // Expand ~ to home directory
+    const sourcePath = expandTildePath(rawSourcePath);
+    const destDir = expandTildePath(rawDestDir);
+
+    // Security check
+    const homedir = getHomeDir();
+    if (!destDir.startsWith(homedir) && !destDir.startsWith('/tmp')) {
+      return c.json(
+        { error: 'Access denied: destination must be within home directory' },
+        403
+      );
+    }
+
+    // Check if source file exists
+    try {
+      const stat = await fs.stat(sourcePath);
+      if (!stat.isFile()) {
+        return c.json({ error: 'Source path is not a file' }, 400);
+      }
+    } catch {
+      return c.json({ error: 'Source file does not exist' }, 404);
+    }
+
+    // Create destination directory if it doesn't exist
+    try {
+      await fs.mkdir(destDir, { recursive: true });
+    } catch {
+      // Directory may already exist
+    }
+
+    // Determine destination file name
+    const destFileName = fileName || path.basename(sourcePath);
+    const destPath = path.join(destDir, destFileName);
+
+    // Copy file
+    await fs.copyFile(sourcePath, destPath);
+
+    console.log(`[Files API] Copied file: ${sourcePath} -> ${destPath}`);
+
+    return c.json({
+      success: true,
+      destPath,
+      fileName: destFileName,
+    });
+  } catch (error) {
+    console.error('[Files API] Copy error:', error);
     return c.json(
       {
         success: false,

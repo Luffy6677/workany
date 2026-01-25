@@ -1,11 +1,13 @@
-import { startTransition, useEffect, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL } from '@/config';
 import type { AgentMessage } from '@/shared/hooks/useAgent';
 import { cn } from '@/shared/lib/utils';
 import { useLanguage } from '@/shared/providers/language-provider';
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Circle,
   Code2,
   ExternalLink,
   File,
@@ -24,6 +26,8 @@ import {
   Loader2,
   Music,
   Package,
+  PanelRight,
+  PanelRightOpen,
   Presentation,
   Search,
   Sparkles,
@@ -34,6 +38,14 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
+
+import { useSidebar } from '@/components/layout/sidebar-context';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 import type { Artifact, ArtifactType } from '@/components/artifacts';
 
@@ -60,6 +72,41 @@ interface WorkingFile {
   isExpanded?: boolean;
 }
 
+// TodoWrite tool data structures
+interface TodoItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  priority?: 'high' | 'medium' | 'low';
+}
+
+interface TodoWriteInput {
+  todos: TodoItem[];
+}
+
+// Extract the latest todo list from messages
+// TodoWrite always sends the complete list, so we take the last call
+function extractTodoProgress(messages: AgentMessage[]): TodoItem[] {
+  // Find all TodoWrite tool_use messages
+  const todoWriteMessages = messages.filter(
+    (m) => m.type === 'tool_use' && m.name === 'TodoWrite'
+  );
+
+  if (todoWriteMessages.length === 0) {
+    return [];
+  }
+
+  // Get the last TodoWrite call (most recent state)
+  const lastTodoWrite = todoWriteMessages[todoWriteMessages.length - 1];
+  const input = lastTodoWrite.input as TodoWriteInput | undefined;
+
+  if (!input?.todos || !Array.isArray(input.todos)) {
+    return [];
+  }
+
+  return input.todos;
+}
+
 interface RightSidebarProps {
   messages: AgentMessage[];
   isRunning: boolean;
@@ -74,6 +121,8 @@ interface RightSidebarProps {
   onSelectWorkingFile?: (file: WorkingFile) => void;
   // Version number to trigger file refresh when attachments are saved
   filesVersion?: number;
+  // Whether to hide the workspace section (when it's shown in left sidebar)
+  hideWorkspace?: boolean;
 }
 
 // Get file icon based on file extension
@@ -994,8 +1043,10 @@ export function RightSidebar({
   sessionFolder: _sessionFolder,
   onSelectWorkingFile,
   filesVersion = 0,
+  hideWorkspace = false,
 }: RightSidebarProps) {
   const { t } = useLanguage();
+  const { rightOpen, toggleRight } = useSidebar();
   const [selectedTool, setSelectedTool] = useState<ToolUsage | null>(null);
   const [showAllArtifacts, setShowAllArtifacts] = useState(false);
   const [showAllTools, setShowAllTools] = useState(false);
@@ -1007,6 +1058,13 @@ export function RightSidebar({
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(true);
   const [editedExpanded, setEditedExpanded] = useState(true);
+
+  // Hover popup states for collapsed mode
+  const [showProgressPopup, setShowProgressPopup] = useState(false);
+  const [showArtifactsPopup, setShowArtifactsPopup] = useState(false);
+  const [showContextPopup, setShowContextPopup] = useState(false);
+  // Logo hover state for expand button
+  const [logoHovered, setLogoHovered] = useState(false);
 
   // Read directory via API (uses Node.js fs on backend)
   async function readDirViaApi(dirPath: string): Promise<WorkingFile[]> {
@@ -1020,7 +1078,10 @@ export function RightSidebar({
         body: JSON.stringify({ path: dirPath, maxDepth: 3 }),
       });
 
-      console.log('[RightSidebar] readDirViaApi response status:', response.status);
+      console.log(
+        '[RightSidebar] readDirViaApi response status:',
+        response.status
+      );
 
       if (!response.ok) {
         console.error('[RightSidebar] readDirViaApi response not ok');
@@ -1031,12 +1092,17 @@ export function RightSidebar({
       console.log('[RightSidebar] readDirViaApi data:', data);
 
       if (!data.files || !Array.isArray(data.files)) {
-        console.error('[RightSidebar] readDirViaApi: no files array in response');
+        console.error(
+          '[RightSidebar] readDirViaApi: no files array in response'
+        );
         return [];
       }
 
       if (data.error) {
-        console.warn('[RightSidebar] readDirViaApi: API returned error:', data.error);
+        console.warn(
+          '[RightSidebar] readDirViaApi: API returned error:',
+          data.error
+        );
       }
 
       // Convert API response to WorkingFile format with isExpanded
@@ -1070,7 +1136,10 @@ export function RightSidebar({
     let cancelled = false;
 
     async function loadWorkingFiles() {
-      console.log('[RightSidebar] loadWorkingFiles called with workingDir:', workingDir);
+      console.log(
+        '[RightSidebar] loadWorkingFiles called with workingDir:',
+        workingDir
+      );
       if (!workingDir || !workingDir.startsWith('/')) {
         console.log('[RightSidebar] workingDir is empty or invalid');
         setWorkingFiles([]);
@@ -1185,6 +1254,9 @@ export function RightSidebar({
     : mcpTools.slice(0, DEFAULT_VISIBLE_COUNT);
   const hasMoreTools = mcpTools.length > DEFAULT_VISIBLE_COUNT;
 
+  // Todo progress from TodoWrite tool
+  const todoProgress = useMemo(() => extractTodoProgress(messages), [messages]);
+
   // Extract external folders (folders outside workingDir that were accessed)
   // Extract and deduplicate external folders (keep only parent paths)
   const externalFoldersRaw = extractExternalFolders(messages, workingDir);
@@ -1218,168 +1290,109 @@ export function RightSidebar({
     }
   };
 
-  return (
-    <div className="bg-background flex h-full flex-col overflow-x-hidden overflow-y-auto">
-      {/* 1. Workspace Section */}
-      <CollapsibleSection
-        title={t.task.workspace || 'Workspace'}
-        defaultExpanded={true}
-      >
-        {/* Output folder subsection */}
-        <div className="mt-1 mb-3">
-          <div className="mb-1 flex items-center gap-1">
-            <button
-              onClick={() => setOutputExpanded(!outputExpanded)}
-              className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-            >
-              {outputExpanded ? (
-                <ChevronDown className="size-3" />
-              ) : (
-                <ChevronRight className="size-3" />
-              )}
-              <span className="text-xs font-medium">
-                {t.task.outputFolder || 'Output'}
-              </span>
-            </button>
-            {workingDir && (
-              <button
-                onClick={() => handleOpenFolder(workingDir)}
-                className="text-muted-foreground hover:text-foreground ml-auto p-0.5 transition-colors"
-                title={t.task.openInFinder}
-              >
-                <ExternalLink className="size-3" />
-              </button>
-            )}
-          </div>
-          {outputExpanded && (
-            <>
-              {!workingDir ? (
-                <p className="text-muted-foreground py-1 text-sm">
-                  {t.task.waitingForTask}
-                </p>
-              ) : loadingFiles ? (
-                <div className="text-muted-foreground flex items-center gap-2 py-1">
-                  <Loader2 className="size-4 animate-spin" />
-                  <span className="text-sm">{t.common.loading}</span>
+  // Render progress content (shared between expanded and popup)
+  const renderProgressContent = () => (
+    <div className="space-y-1">
+      {todoProgress.map((todo) => {
+        const isCompleted = todo.status === 'completed';
+        const isInProgress = todo.status === 'in_progress';
+        return (
+          <div key={todo.id} className="flex items-start gap-2 py-1">
+            <div className="mt-0.5 shrink-0">
+              {isCompleted ? (
+                <div className="flex size-4 items-center justify-center rounded-full bg-blue-500">
+                  <Check className="size-2.5 text-white" strokeWidth={3} />
                 </div>
-              ) : workingFiles.length === 0 ? (
-                <EmptyState icon={Folder} description={t.task.outputsDesc} />
+              ) : isInProgress ? (
+                <Loader2 className="size-4 animate-spin text-blue-500" />
               ) : (
-                <div className="max-h-[200px] space-y-0.5 overflow-y-auto">
-                  {workingFiles.map((file) => (
-                    <FileTreeItem
-                      key={file.path}
-                      file={file}
-                      onSelectFile={onSelectWorkingFile}
-                      onSelectArtifact={onSelectArtifact}
-                    />
-                  ))}
-                </div>
+                <Circle className="text-muted-foreground/40 size-4" />
               )}
-            </>
-          )}
-        </div>
-
-        {/* Edited folders subsection */}
-        {externalFolders.length > 0 && (
-          <div>
-            <div className="mb-1 flex items-center gap-1">
-              <button
-                onClick={() => setEditedExpanded(!editedExpanded)}
-                className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-              >
-                {editedExpanded ? (
-                  <ChevronDown className="size-3" />
-                ) : (
-                  <ChevronRight className="size-3" />
-                )}
-                <span className="text-xs font-medium">
-                  {t.task.editedFolders || 'Edited'}
-                </span>
-              </button>
             </div>
-            {editedExpanded && (
-              <div className="space-y-0.5">
-                {externalFolders.map((folder) => (
-                  <button
-                    key={folder}
-                    onClick={() => handleOpenFolder(folder)}
-                    className="hover:bg-accent/50 flex w-full items-center gap-1.5 rounded-md py-1 text-left transition-colors"
-                  >
-                    <span className="size-4 shrink-0" />
-                    <FolderOpen className="text-muted-foreground/60 size-3.5 shrink-0" />
-                    <span className="text-foreground/80 truncate text-sm">
-                      {getFolderName(folder)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </CollapsibleSection>
-
-      {/* 2. Artifacts Section */}
-      <CollapsibleSection title={t.task.artifacts} defaultExpanded={true}>
-        {artifacts.length === 0 ? (
-          <EmptyState icon={Package} description={t.task.noArtifacts} />
-        ) : (
-          <>
-            <div
+            <span
               className={cn(
-                'space-y-1',
-                showAllArtifacts && 'max-h-[300px] overflow-y-auto'
+                'text-sm leading-tight',
+                isCompleted
+                  ? 'text-muted-foreground line-through'
+                  : 'text-foreground/80'
               )}
             >
-              {visibleArtifacts.map((artifact) => {
-                const IconComponent = getFileIcon(artifact.type);
-                const isSelected = selectedArtifact?.id === artifact.id;
+              {todo.content}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 
-                return (
-                  <button
-                    key={artifact.id}
-                    onClick={() => onSelectArtifact(artifact)}
+  // Render artifacts content (shared between expanded and popup)
+  const renderArtifactsContent = () => (
+    <>
+      {artifacts.length === 0 ? (
+        <EmptyState icon={Package} description={t.task.noArtifacts} />
+      ) : (
+        <>
+          <div
+            className={cn(
+              'space-y-1',
+              showAllArtifacts && 'max-h-[300px] overflow-y-auto'
+            )}
+          >
+            {visibleArtifacts.map((artifact) => {
+              const IconComponent = getFileIcon(artifact.type);
+              const isSelected = selectedArtifact?.id === artifact.id;
+              return (
+                <button
+                  key={artifact.id}
+                  onClick={() => onSelectArtifact(artifact)}
+                  className={cn(
+                    'flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors',
+                    isSelected ? 'bg-accent/60' : 'hover:bg-accent/30'
+                  )}
+                >
+                  <IconComponent
                     className={cn(
-                      'flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors',
-                      isSelected ? 'bg-accent/60' : 'hover:bg-accent/30'
+                      'size-3.5 shrink-0',
+                      isSelected
+                        ? 'text-foreground/70'
+                        : 'text-muted-foreground/60'
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      'truncate text-sm',
+                      isSelected ? 'text-foreground' : 'text-foreground/80'
                     )}
                   >
-                    <IconComponent
-                      className={cn(
-                        'size-3.5 shrink-0',
-                        isSelected
-                          ? 'text-foreground/70'
-                          : 'text-muted-foreground/60'
-                      )}
-                    />
-                    <span
-                      className={cn(
-                        'truncate text-sm',
-                        isSelected ? 'text-foreground' : 'text-foreground/80'
-                      )}
-                    >
-                      {artifact.name}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            {hasMoreArtifacts && (
-              <button
-                onClick={() => setShowAllArtifacts(!showAllArtifacts)}
-                className="text-muted-foreground hover:text-foreground w-full py-2 text-center text-xs transition-colors"
-              >
-                {showAllArtifacts
-                  ? 'Show less'
-                  : `Show ${artifacts.length - 10} more`}
-              </button>
-            )}
-          </>
-        )}
-      </CollapsibleSection>
+                    {artifact.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {hasMoreArtifacts && (
+            <button
+              onClick={() => setShowAllArtifacts(!showAllArtifacts)}
+              className="text-muted-foreground hover:text-foreground w-full py-2 text-center text-xs transition-colors"
+            >
+              {showAllArtifacts
+                ? 'Show less'
+                : `Show ${artifacts.length - 10} more`}
+            </button>
+          )}
+        </>
+      )}
+    </>
+  );
 
-      {/* 3. Tools Section - MCP tools */}
-      <CollapsibleSection title={t.task.tools} defaultExpanded={false}>
+  // Render context content (shared between expanded and popup)
+  const renderContextContent = () => (
+    <>
+      {/* Tools Sub-section */}
+      <div className="mb-3">
+        <h4 className="text-muted-foreground/60 mb-1.5 text-xs">
+          {t.task.tools}
+        </h4>
         {mcpTools.length === 0 ? (
           <EmptyState icon={Wrench} description={t.task.noTools} />
         ) : (
@@ -1387,7 +1400,7 @@ export function RightSidebar({
             <div
               className={cn(
                 'space-y-1',
-                showAllTools && 'max-h-[300px] overflow-y-auto'
+                showAllTools && 'max-h-[200px] overflow-y-auto'
               )}
             >
               {visibleTools.map((tool) => {
@@ -1434,10 +1447,13 @@ export function RightSidebar({
             )}
           </>
         )}
-      </CollapsibleSection>
+      </div>
 
-      {/* 4. Skills Section */}
-      <CollapsibleSection title={t.task.skills} defaultExpanded={false}>
+      {/* Skills Sub-section */}
+      <div>
+        <h4 className="text-muted-foreground/60 mb-1.5 text-xs">
+          {t.task.skills}
+        </h4>
         {loadingSkills ? (
           <div className="text-muted-foreground flex items-center gap-2 py-2">
             <Loader2 className="size-4 animate-spin" />
@@ -1446,8 +1462,7 @@ export function RightSidebar({
         ) : usedSkillNames.size === 0 ? (
           <EmptyState icon={Sparkles} description={t.task.noSkills} />
         ) : skillsDirs.length === 0 ? (
-          // Show skill names only if skill files couldn't be loaded
-          <div className="max-h-[300px] space-y-1 overflow-y-auto">
+          <div className="max-h-[200px] space-y-1 overflow-y-auto">
             {Array.from(usedSkillNames).map((skillName) => (
               <div
                 key={skillName}
@@ -1461,8 +1476,7 @@ export function RightSidebar({
             ))}
           </div>
         ) : (
-          // Show skill files/content
-          <div className="max-h-[300px] space-y-0.5 overflow-y-auto">
+          <div className="max-h-[200px] space-y-0.5 overflow-y-auto">
             {skillsDirs.map((dir) => (
               <div key={dir.name}>
                 {dir.files.map((file) => (
@@ -1477,16 +1491,304 @@ export function RightSidebar({
             ))}
           </div>
         )}
-      </CollapsibleSection>
+      </div>
+    </>
+  );
 
-      {/* Tool Preview Modal */}
-      {selectedTool && (
-        <ToolPreviewModal
-          tool={selectedTool}
-          onClose={() => setSelectedTool(null)}
-        />
-      )}
-    </div>
+  return (
+    <TooltipProvider delayDuration={0}>
+      <div
+        className={cn(
+          'bg-background flex h-full flex-col transition-all duration-300',
+          rightOpen ? 'overflow-x-hidden overflow-y-auto' : 'w-14'
+        )}
+      >
+        {rightOpen ? (
+          <>
+            {/* Expanded State */}
+            {/* Header with collapse button */}
+            <div className="flex shrink-0 items-center justify-between px-4 py-3">
+              <span className="text-foreground text-sm font-medium">
+                {/* Empty span for spacing */}
+              </span>
+              <button
+                onClick={toggleRight}
+                className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-8 cursor-pointer items-center justify-center rounded-lg transition-colors duration-200"
+              >
+                <PanelRight className="size-4" />
+              </button>
+            </div>
+
+            {/* 1. Workspace Section - Hidden when workspace is shown in left sidebar */}
+            {!hideWorkspace && (
+              <CollapsibleSection
+                title={t.task.workspace || 'Workspace'}
+                defaultExpanded={true}
+              >
+                {/* Output folder subsection */}
+                <div className="mt-1 mb-3">
+                  <div className="mb-1 flex items-center gap-1">
+                    <button
+                      onClick={() => setOutputExpanded(!outputExpanded)}
+                      className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                    >
+                      {outputExpanded ? (
+                        <ChevronDown className="size-3" />
+                      ) : (
+                        <ChevronRight className="size-3" />
+                      )}
+                      <span className="text-xs font-medium">
+                        {t.task.outputFolder || 'Output'}
+                      </span>
+                    </button>
+                    {workingDir && (
+                      <button
+                        onClick={() => handleOpenFolder(workingDir)}
+                        className="text-muted-foreground hover:text-foreground ml-auto p-0.5 transition-colors"
+                        title={t.task.openInFinder}
+                      >
+                        <ExternalLink className="size-3" />
+                      </button>
+                    )}
+                  </div>
+                  {outputExpanded && (
+                    <>
+                      {!workingDir ? (
+                        <p className="text-muted-foreground py-1 text-sm">
+                          {t.task.waitingForTask}
+                        </p>
+                      ) : loadingFiles ? (
+                        <div className="text-muted-foreground flex items-center gap-2 py-1">
+                          <Loader2 className="size-4 animate-spin" />
+                          <span className="text-sm">{t.common.loading}</span>
+                        </div>
+                      ) : workingFiles.length === 0 ? (
+                        <EmptyState
+                          icon={Folder}
+                          description={t.task.outputsDesc}
+                        />
+                      ) : (
+                        <div className="max-h-[200px] space-y-0.5 overflow-y-auto">
+                          {workingFiles.map((file) => (
+                            <FileTreeItem
+                              key={file.path}
+                              file={file}
+                              onSelectFile={onSelectWorkingFile}
+                              onSelectArtifact={onSelectArtifact}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Edited folders subsection */}
+                {externalFolders.length > 0 && (
+                  <div>
+                    <div className="mb-1 flex items-center gap-1">
+                      <button
+                        onClick={() => setEditedExpanded(!editedExpanded)}
+                        className="text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                      >
+                        {editedExpanded ? (
+                          <ChevronDown className="size-3" />
+                        ) : (
+                          <ChevronRight className="size-3" />
+                        )}
+                        <span className="text-xs font-medium">
+                          {t.task.editedFolders || 'Edited'}
+                        </span>
+                      </button>
+                    </div>
+                    {editedExpanded && (
+                      <div className="space-y-0.5">
+                        {externalFolders.map((folder) => (
+                          <button
+                            key={folder}
+                            onClick={() => handleOpenFolder(folder)}
+                            className="hover:bg-accent/50 flex w-full items-center gap-1.5 rounded-md py-1 text-left transition-colors"
+                          >
+                            <span className="size-4 shrink-0" />
+                            <FolderOpen className="text-muted-foreground/60 size-3.5 shrink-0" />
+                            <span className="text-foreground/80 truncate text-sm">
+                              {getFolderName(folder)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CollapsibleSection>
+            )}
+
+            {/* 2. Progress Section - TodoWrite progress */}
+            {todoProgress.length > 0 && (
+              <CollapsibleSection
+                title={t.task.progress || 'Progress'}
+                defaultExpanded={true}
+              >
+                {renderProgressContent()}
+              </CollapsibleSection>
+            )}
+
+            {/* 3. Artifacts Section */}
+            <CollapsibleSection title={t.task.artifacts} defaultExpanded={true}>
+              {renderArtifactsContent()}
+            </CollapsibleSection>
+
+            {/* 4. Context Section - Tools & Skills */}
+            <CollapsibleSection
+              title={t.task.context || 'Context'}
+              defaultExpanded={false}
+            >
+              {renderContextContent()}
+            </CollapsibleSection>
+          </>
+        ) : (
+          <>
+            {/* Collapsed State - Icon-only vertical bar */}
+            {/* Expand button at top */}
+            <div className="flex shrink-0 items-center justify-center p-3">
+              <button
+                onClick={toggleRight}
+                onMouseEnter={() => setLogoHovered(true)}
+                onMouseLeave={() => setLogoHovered(false)}
+                className="hover:bg-accent relative flex size-10 cursor-pointer items-center justify-center rounded-xl transition-all duration-200"
+              >
+                {logoHovered ? (
+                  <PanelRightOpen className="text-foreground size-5" />
+                ) : (
+                  <PanelRight className="text-muted-foreground size-5" />
+                )}
+              </button>
+            </div>
+
+            {/* Icon buttons with hover popups */}
+            <div className="flex flex-1 flex-col items-center gap-1 px-2">
+              {/* Progress Icon - only show if there's progress */}
+              {todoProgress.length > 0 && (
+                <div
+                  className="relative"
+                  onMouseEnter={() => setShowProgressPopup(true)}
+                  onMouseLeave={() => setShowProgressPopup(false)}
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-10 cursor-pointer items-center justify-center rounded-xl transition-colors duration-200">
+                        <ListTodo className="size-5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      {t.task.progress || 'Progress'}
+                    </TooltipContent>
+                  </Tooltip>
+
+                  {/* Progress Popup */}
+                  {showProgressPopup && (
+                    <>
+                      <div className="absolute top-0 right-full z-50 h-full w-3" />
+                      <div className="bg-background border-border/60 absolute top-0 right-full z-50 mr-2 max-h-[70vh] w-80 overflow-hidden rounded-xl border shadow-xl">
+                        <div className="border-border/50 bg-muted/30 flex items-center border-b px-4 py-3">
+                          <h3 className="text-foreground text-sm font-medium">
+                            {t.task.progress || 'Progress'}
+                          </h3>
+                        </div>
+                        <div className="max-h-[calc(70vh-48px)] overflow-y-auto p-4">
+                          {renderProgressContent()}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Artifacts Icon */}
+              <div
+                className="relative"
+                onMouseEnter={() => setShowArtifactsPopup(true)}
+                onMouseLeave={() => setShowArtifactsPopup(false)}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-10 cursor-pointer items-center justify-center rounded-xl transition-colors duration-200">
+                      <Package className="size-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">
+                    {t.task.artifacts}
+                  </TooltipContent>
+                </Tooltip>
+
+                {/* Artifacts Popup */}
+                {showArtifactsPopup && (
+                  <>
+                    <div className="absolute top-0 right-full z-50 h-full w-3" />
+                    <div className="bg-background border-border/60 absolute top-0 right-full z-50 mr-2 max-h-[70vh] w-80 overflow-hidden rounded-xl border shadow-xl">
+                      <div className="border-border/50 bg-muted/30 flex items-center border-b px-4 py-3">
+                        <h3 className="text-foreground text-sm font-medium">
+                          {t.task.artifacts}
+                        </h3>
+                      </div>
+                      <div className="max-h-[calc(70vh-48px)] overflow-y-auto p-4">
+                        {renderArtifactsContent()}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Context Icon */}
+              <div
+                className="relative"
+                onMouseEnter={() => setShowContextPopup(true)}
+                onMouseLeave={() => setShowContextPopup(false)}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="text-muted-foreground hover:bg-accent hover:text-foreground flex size-10 cursor-pointer items-center justify-center rounded-xl transition-colors duration-200">
+                      <Layers className="size-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">
+                    {t.task.context || 'Context'}
+                  </TooltipContent>
+                </Tooltip>
+
+                {/* Context Popup */}
+                {showContextPopup && (
+                  <>
+                    <div className="absolute top-0 right-full z-50 h-full w-3" />
+                    <div className="bg-background border-border/60 absolute top-0 right-full z-50 mr-2 max-h-[70vh] w-80 overflow-hidden rounded-xl border shadow-xl">
+                      <div className="border-border/50 bg-muted/30 flex items-center border-b px-4 py-3">
+                        <h3 className="text-foreground text-sm font-medium">
+                          {t.task.context || 'Context'}
+                        </h3>
+                      </div>
+                      <div className="max-h-[calc(70vh-48px)] overflow-y-auto p-4">
+                        {renderContextContent()}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Spacer */}
+            <div className="flex-1" />
+          </>
+        )}
+
+        {/* Tool Preview Modal */}
+        {selectedTool && (
+          <ToolPreviewModal
+            tool={selectedTool}
+            onClose={() => setSelectedTool(null)}
+          />
+        )}
+      </div>
+    </TooltipProvider>
   );
 }
 
