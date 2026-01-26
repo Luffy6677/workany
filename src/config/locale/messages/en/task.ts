@@ -1,5 +1,6 @@
 export default {
   progress: 'Progress',
+  noProgress: 'No progress yet',
   artifacts: 'Artifacts',
   assets: 'Assets',
   context: 'Context',

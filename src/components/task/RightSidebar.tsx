@@ -1623,15 +1623,24 @@ export function RightSidebar({
               </CollapsibleSection>
             )}
 
-            {/* 2. Progress Section - TodoWrite progress */}
-            {todoProgress.length > 0 && (
-              <CollapsibleSection
-                title={t.task.progress || 'Progress'}
-                defaultExpanded={true}
-              >
-                {renderProgressContent()}
-              </CollapsibleSection>
-            )}
+            {/* 2. Progress Section - TodoWrite progress (always visible) */}
+            <CollapsibleSection
+              title={t.task.progress || 'Progress'}
+              defaultExpanded={true}
+            >
+              {todoProgress.length > 0 ? (
+                renderProgressContent()
+              ) : (
+                <div className="flex items-center gap-2 py-2">
+                  <div className="bg-muted/50 rounded p-1.5">
+                    <ListTodo className="text-muted-foreground/40 size-4" />
+                  </div>
+                  <p className="text-muted-foreground text-sm">
+                    {t.task.noProgress || 'No progress yet'}
+                  </p>
+                </div>
+              )}
+            </CollapsibleSection>
 
             {/* 3. Artifacts Section */}
             <CollapsibleSection title={t.task.artifacts} defaultExpanded={true}>

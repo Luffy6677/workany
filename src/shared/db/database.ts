@@ -295,6 +295,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     cost: null,
     duration: null,
     mode: input.mode,
+    workingDirectory: input.workingDirectory,
     created_at: now,
     updated_at: now,
   };
@@ -302,25 +303,33 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   const database = await getSQLiteDatabase();
 
   if (database) {
-    // SQLite (Tauri) - Try with new schema including mode, fallback to older schemas
+    // SQLite (Tauri) - Try with new schema including mode and workingDirectory, fallback to older schemas
     try {
       await database.execute(
-        'INSERT INTO tasks (id, session_id, task_index, prompt, mode) VALUES ($1, $2, $3, $4, $5)',
-        [input.id, input.session_id, input.task_index, input.prompt, input.mode || 'work']
+        'INSERT INTO tasks (id, session_id, task_index, prompt, mode, workingDirectory) VALUES ($1, $2, $3, $4, $5, $6)',
+        [input.id, input.session_id, input.task_index, input.prompt, input.mode || 'work', input.workingDirectory || null]
       );
     } catch {
-      // Try without mode column (older schema)
+      // Try without workingDirectory column
       try {
         await database.execute(
-          'INSERT INTO tasks (id, session_id, task_index, prompt) VALUES ($1, $2, $3, $4)',
-          [input.id, input.session_id, input.task_index, input.prompt]
+          'INSERT INTO tasks (id, session_id, task_index, prompt, mode) VALUES ($1, $2, $3, $4, $5)',
+          [input.id, input.session_id, input.task_index, input.prompt, input.mode || 'work']
         );
       } catch {
-        // Fallback for oldest schema without session_id
-        await database.execute('INSERT INTO tasks (id, prompt) VALUES ($1, $2)', [
-          input.id,
-          input.prompt,
-        ]);
+        // Try without mode column (older schema)
+        try {
+          await database.execute(
+            'INSERT INTO tasks (id, session_id, task_index, prompt) VALUES ($1, $2, $3, $4)',
+            [input.id, input.session_id, input.task_index, input.prompt]
+          );
+        } catch {
+          // Fallback for oldest schema without session_id
+          await database.execute('INSERT INTO tasks (id, prompt) VALUES ($1, $2)', [
+            input.id,
+            input.prompt,
+          ]);
+        }
       }
     }
     const result = await getTask(input.id);
@@ -336,7 +345,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     const tx = db.transaction('tasks', 'readwrite');
     const store = tx.objectStore('tasks');
     await idbRequest(store.put(task));
-    console.log('[IDB] Created task:', input.id);
+    console.log('[IDB] Created task:', input.id, 'workingDirectory:', input.workingDirectory);
 
     // Update session task count
     await updateSessionTaskCount(input.session_id, input.task_index);

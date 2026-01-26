@@ -1,5 +1,6 @@
 export default {
   progress: '进度',
+  noProgress: '暂无进度',
   artifacts: '产物',
   assets: '资产',
   context: '上下文',

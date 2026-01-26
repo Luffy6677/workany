@@ -5,11 +5,12 @@ import { API_BASE_URL } from '@/config';
 import type { Task } from '@/shared/db';
 import { getSettings, type UserProfile } from '@/shared/db/settings';
 import { cn } from '@/shared/lib/utils';
+import { getDirectoryHandle, getHandleByName } from '@/shared/lib/working-directory-store';
 import { useLanguage } from '@/shared/providers/language-provider';
 import {
   ArrowLeft,
-  Calendar,
   ChevronsUpDown,
+  Cloud,
   File,
   FileCode2,
   FileImage,
@@ -17,7 +18,7 @@ import {
   FileText,
   FileType,
   Folder,
-  Globe,
+  FolderOpen,
   ListTodo,
   Loader2,
   MoreHorizontal,
@@ -26,8 +27,6 @@ import {
   PanelLeftOpen,
   Presentation,
   Settings,
-  Smartphone,
-  Sparkles,
   SquarePen,
   Star,
   Table,
@@ -69,11 +68,19 @@ interface WorkingFile {
   isExpanded?: boolean;
 }
 
+// Working directory info - supports both path (Tauri) and handle key (Web)
+interface WorkingDirectoryInfo {
+  name: string;
+  path?: string; // Available in Tauri
+  handleKey?: string; // Key to retrieve FileSystemDirectoryHandle from global store (Web)
+}
+
 interface WorkspaceProps {
   sessionFolder?: string;
   artifacts?: Artifact[];
   onSelectArtifact?: (artifact: Artifact) => void;
   onFilesChanged?: () => void;
+  workingDirectory?: WorkingDirectoryInfo | null; // User-selected local working directory
 }
 
 interface LeftSidebarProps {
@@ -288,22 +295,25 @@ async function readDirViaApi(dirPath: string): Promise<WorkingFile[]> {
 }
 
 // Workspace Section Component
-// Displays artifacts (files created by agent) and user-uploaded files
+// Displays artifacts (files created by agent), user-uploaded files, and working directory files
 function WorkspaceSection({
   sessionFolder,
   onSelectArtifact,
   artifacts = [],
   onFilesChanged,
   onOpenFilePicker,
+  workingDirectory,
 }: {
   sessionFolder?: string;
   onSelectArtifact?: (artifact: Artifact) => void;
   artifacts?: Artifact[];
   onFilesChanged?: () => void;
   onOpenFilePicker?: (openFn: () => void, isUploading: boolean) => void;
+  workingDirectory?: WorkingDirectoryInfo | null;
 }) {
   const { t } = useLanguage();
   const [uploadedFiles, setUploadedFiles] = useState<Artifact[]>([]);
+  const [workingDirFiles, setWorkingDirFiles] = useState<Artifact[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0); // Local counter to trigger refresh after upload
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -353,29 +363,136 @@ function WorkspaceSection({
     };
   }, [uploadsDir, artifacts.length, refreshCounter]); // Also refresh when refreshCounter changes
 
-  // Merge artifacts and uploaded files
+  // Load files from working directory (user-selected local folder)
+  useEffect(() => {
+    let cancelled = false;
+
+    console.log('[WorkspaceSection] useEffect triggered, workingDirectory:', workingDirectory);
+
+    async function loadWorkingDirFiles() {
+      if (!workingDirectory) {
+        console.log('[WorkspaceSection] workingDirectory is null/undefined');
+        setWorkingDirFiles([]);
+        return;
+      }
+
+      console.log('[WorkspaceSection] Loading files from workingDirectory:', workingDirectory);
+
+      try {
+        let workingArtifacts: Artifact[] = [];
+
+        if (workingDirectory.path) {
+          // Tauri environment: use API to read directory
+          const files = await readDirViaApi(workingDirectory.path);
+          if (cancelled) return;
+
+          workingArtifacts = files
+            .filter((f) => !f.isDir)
+            .map((f) => {
+              const ext = f.name.split('.').pop()?.toLowerCase();
+              return {
+                id: `wd-${f.path}`,
+                name: f.name,
+                type: getArtifactTypeByExt(ext),
+                path: f.path,
+              };
+            });
+        } else if (workingDirectory.handleKey || workingDirectory.name) {
+          // Web environment: retrieve FileSystemDirectoryHandle from global store
+          // Try by handleKey first, then fall back to retrieving by name from IndexedDB
+          let dirHandle: FileSystemDirectoryHandle | undefined;
+
+          if (workingDirectory.handleKey) {
+            dirHandle = getDirectoryHandle(workingDirectory.handleKey);
+          }
+
+          // If not found by key, try to retrieve by folder name from IndexedDB
+          if (!dirHandle && workingDirectory.name) {
+            console.log('[WorkspaceSection] Handle not found by key, trying to retrieve by name:', workingDirectory.name);
+            dirHandle = await getHandleByName(workingDirectory.name);
+          }
+
+          if (!dirHandle) {
+            console.error('[WorkspaceSection] Directory handle not found for:', workingDirectory.handleKey || workingDirectory.name);
+            return;
+          }
+
+          console.log('[WorkspaceSection] Got dirHandle, iterating entries...');
+          const entries: Artifact[] = [];
+          // Use values() method to iterate directory entries
+          // TypeScript doesn't have complete types for File System Access API
+          const asyncIterator = (dirHandle as unknown as { values(): AsyncIterable<FileSystemHandle> }).values();
+          for await (const entry of asyncIterator) {
+            console.log('[WorkspaceSection] Found entry:', entry.name, entry.kind);
+            if (entry.kind === 'file') {
+              const ext = entry.name.split('.').pop()?.toLowerCase();
+              entries.push({
+                id: `wd-${entry.name}`,
+                name: entry.name,
+                type: getArtifactTypeByExt(ext),
+                // Store the handle key for later file access
+                handleKey: workingDirectory.handleKey,
+              } as Artifact & { handleKey?: string });
+            }
+          }
+          console.log('[WorkspaceSection] Finished iterating, found', entries.length, 'files');
+          if (cancelled) return;
+          workingArtifacts = entries;
+        }
+
+        console.log('[WorkspaceSection] Setting workingDirFiles:', workingArtifacts.length, 'files');
+        setWorkingDirFiles(workingArtifacts);
+      } catch (error) {
+        console.error('[WorkspaceSection] Failed to load working directory files:', error);
+        if (!cancelled) {
+          setWorkingDirFiles([]);
+        }
+      }
+    }
+
+    loadWorkingDirFiles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workingDirectory]);
+
+  // Merge artifacts, uploaded files, and working directory files
   const allFiles = useMemo(() => {
-    const seenPaths = new Set<string>();
+    const seenIds = new Set<string>();
     const result: Artifact[] = [];
 
-    // Add artifacts first (agent-generated files)
+    // Add working directory files first (user's local files)
+    // These may not have path (Web environment), use id as unique key
+    for (const file of workingDirFiles) {
+      const key = file.path || file.id;
+      if (key && !seenIds.has(key)) {
+        seenIds.add(key);
+        result.push(file);
+      }
+    }
+
+    // Add artifacts (agent-generated files)
     for (const artifact of artifacts) {
-      if (artifact.path && !seenPaths.has(artifact.path)) {
-        seenPaths.add(artifact.path);
+      const key = artifact.path || artifact.id;
+      if (key && !seenIds.has(key)) {
+        seenIds.add(key);
         result.push(artifact);
       }
     }
 
     // Add uploaded files
     for (const file of uploadedFiles) {
-      if (file.path && !seenPaths.has(file.path)) {
-        seenPaths.add(file.path);
+      const key = file.path || file.id;
+      if (key && !seenIds.has(key)) {
+        seenIds.add(key);
         result.push(file);
       }
     }
 
+    console.log('[WorkspaceSection] allFiles computed:', result.length, 'files');
     return result;
-  }, [artifacts, uploadedFiles]);
+  }, [artifacts, uploadedFiles, workingDirFiles]);
 
   // Load file content and then select artifact
   const handleSelectArtifact = async (artifact: Artifact) => {
@@ -574,22 +691,15 @@ function DeleteConfirmDialog({
   );
 }
 
-// Get icon for task based on prompt content
-function getTaskIcon(prompt: string) {
-  const lowerPrompt = prompt.toLowerCase();
-  if (lowerPrompt.includes('网站') || lowerPrompt.includes('website')) {
-    return Globe;
+// Get icon for task based on working directory (Cloud vs Local Folder)
+function getTaskIcon(task: Task) {
+  // Differentiate by working directory
+  // If workingDirectory is set, it's a local folder task
+  // If not set (null/undefined), it's a cloud environment task
+  if (task.workingDirectory) {
+    return FolderOpen; // Local folder icon
   }
-  if (lowerPrompt.includes('应用') || lowerPrompt.includes('app')) {
-    return Smartphone;
-  }
-  if (lowerPrompt.includes('设计') || lowerPrompt.includes('design')) {
-    return Sparkles;
-  }
-  if (lowerPrompt.includes('文档') || lowerPrompt.includes('doc')) {
-    return FileText;
-  }
-  return Calendar;
+  return Cloud; // Cloud environment icon
 }
 
 // Mode Switcher Component
@@ -868,6 +978,7 @@ export function LeftSidebar({
                       onSelectArtifact={workspaceProps?.onSelectArtifact}
                       onFilesChanged={workspaceProps?.onFilesChanged}
                       onOpenFilePicker={handleOpenFilePicker}
+                      workingDirectory={workspaceProps?.workingDirectory}
                     />
                   </div>
                 </>
@@ -880,7 +991,7 @@ export function LeftSidebar({
                   </div>
                   <div className="scrollbar-hide mt-1 flex-1 space-y-0.5 overflow-y-auto">
                     {tasks.slice(0, 10).map((task) => {
-                      const TaskIcon = getTaskIcon(task.prompt);
+                      const TaskIcon = getTaskIcon(task);
                       const isRunningInBackground = runningTaskIds.includes(
                         task.id
                       );
@@ -1168,7 +1279,7 @@ export function LeftSidebar({
                         ) : (
                           <div className="space-y-0.5">
                             {tasks.slice(0, 10).map((task) => {
-                              const TaskIcon = getTaskIcon(task.prompt);
+                              const TaskIcon = getTaskIcon(task);
                               const isRunningInBackground =
                                 runningTaskIds.includes(task.id);
                               const isLoading = loadingTaskId === task.id;

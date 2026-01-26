@@ -24,6 +24,7 @@ export interface Task {
   duration: number | null;
   favorite?: boolean; // Whether task is favorited
   mode?: AppMode; // App mode when task was created (work/code)
+  workingDirectory?: string | null; // Working directory name (null = Cloud Environment)
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +65,7 @@ export interface CreateTaskInput {
   task_index: number;
   prompt: string;
   mode?: AppMode;
+  workingDirectory?: string | null;
 }
 
 export interface CreateMessageInput {

@@ -379,7 +379,8 @@ export interface UseAgentReturn {
     existingTaskId?: string,
     sessionInfo?: SessionInfo,
     attachments?: MessageAttachment[],
-    mode?: 'work' | 'code'
+    mode?: 'work' | 'code',
+    workingDirectoryName?: string | null
   ) => Promise<string>;
   approvePlan: () => Promise<void>;
   rejectPlan: () => void;
@@ -1485,7 +1486,8 @@ export function useAgent(): UseAgentReturn {
       existingTaskId?: string,
       sessionInfo?: SessionInfo,
       attachments?: MessageAttachment[],
-      mode?: 'work' | 'code'
+      mode?: 'work' | 'code',
+      workingDirectoryName?: string | null
     ): Promise<string> => {
       // If there's already a running task, move it to background
       if (isRunning && abortControllerRef.current && taskId) {
@@ -1546,6 +1548,7 @@ export function useAgent(): UseAgentReturn {
             task_index: taskIdx,
             prompt,
             mode: mode || 'work',
+            workingDirectory: workingDirectoryName,
           });
           console.log(
             '[useAgent] Created new task:',
@@ -1553,7 +1556,9 @@ export function useAgent(): UseAgentReturn {
             'in session:',
             sessId,
             'mode:',
-            mode || 'work'
+            mode || 'work',
+            'workingDirectory:',
+            workingDirectoryName || 'Cloud'
           );
         } else {
           console.log('[useAgent] Task already exists:', currentTaskId);

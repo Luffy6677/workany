@@ -38,7 +38,7 @@ import { ArtifactPreview, type Artifact } from '@/components/artifacts';
 import { Logo } from '@/components/common/logo';
 import { LeftSidebar, SidebarProvider, useSidebar } from '@/components/layout';
 import { SettingsModal } from '@/components/settings';
-import { ChatInput } from '@/components/shared/ChatInput';
+import { ChatInput, type WorkingDirectoryInfo } from '@/components/shared/ChatInput';
 import { LazyImage } from '@/components/shared/LazyImage';
 import { PlanApproval } from '@/components/task/PlanApproval';
 import { QuestionInput } from '@/components/task/QuestionInput';
@@ -51,6 +51,7 @@ interface LocationState {
   taskIndex?: number;
   attachments?: MessageAttachment[];
   mode?: 'work' | 'code';
+  workingDirectory?: WorkingDirectoryInfo | null;
 }
 
 // Context for tool selection - allows child components to select tools
@@ -93,6 +94,13 @@ function TaskDetailContent() {
   const initialTaskIndex = state?.taskIndex || 1;
   const initialAttachments = state?.attachments;
   const initialMode = state?.mode || 'work';
+  const initialWorkingDirectory = state?.workingDirectory || null;
+
+  // Current working directory - can come from navigation state (new task) or loaded task (existing task)
+  const [currentWorkingDirectory, setCurrentWorkingDirectory] = useState<WorkingDirectoryInfo | null>(initialWorkingDirectory);
+
+  console.log('[TaskDetail] initialWorkingDirectory:', initialWorkingDirectory);
+  console.log('[TaskDetail] currentWorkingDirectory:', currentWorkingDirectory);
 
   const {
     messages,
@@ -654,6 +662,23 @@ function TaskDetailContent() {
           const exists = prev.some((t) => t.id === existingTask.id);
           return exists ? prev : [existingTask, ...prev];
         });
+
+        // Restore working directory from task if available
+        // For Tauri: workingDirectory contains the full path
+        // For Web: workingDirectory contains just the name (can't restore handle without re-selection)
+        if (existingTask.workingDirectory && !initialWorkingDirectory) {
+          const savedWorkingDir = existingTask.workingDirectory;
+          // Check if it looks like a path (contains /)
+          const isPath = savedWorkingDir.includes('/');
+          const folderName = isPath ? savedWorkingDir.split('/').pop() || savedWorkingDir : savedWorkingDir;
+
+          console.log('[TaskDetail] Restoring workingDirectory from task:', savedWorkingDir);
+          setCurrentWorkingDirectory({
+            name: folderName,
+            path: isPath ? savedWorkingDir : undefined,
+          });
+        }
+
         await loadMessages(taskId);
         setHasStarted(true);
         setIsLoading(false);
@@ -680,7 +705,8 @@ function TaskDetailContent() {
         const sessionInfo = initialSessionId
           ? { sessionId: initialSessionId, taskIndex: initialTaskIndex }
           : undefined;
-        await runAgent(initialPrompt, taskId, sessionInfo, initialAttachments, initialMode);
+        // Save path for Tauri (so we can restore the directory), name for Web (path not available)
+        await runAgent(initialPrompt, taskId, sessionInfo, initialAttachments, initialMode, initialWorkingDirectory?.path || initialWorkingDirectory?.name);
         const newTask = await loadTask(taskId);
         setTask(newTask);
       } else {
@@ -765,6 +791,7 @@ function TaskDetailContent() {
             artifacts,
             onSelectArtifact: handleSelectArtifact,
             onFilesChanged: () => setFilesVersion((v) => v + 1),
+            workingDirectory: currentWorkingDirectory,
           }}
         />
 

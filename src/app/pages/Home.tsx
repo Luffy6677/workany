@@ -19,7 +19,7 @@ import { generateSessionId } from '@/shared/lib/session';
 import { useLanguage } from '@/shared/providers/language-provider';
 
 import { LeftSidebar, SidebarProvider } from '@/components/layout';
-import { ChatInput } from '@/components/shared/ChatInput';
+import { ChatInput, type WorkingDirectoryInfo } from '@/components/shared/ChatInput';
 
 export function HomePage() {
   return (
@@ -34,6 +34,7 @@ function HomeContent() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([]);
   const [appMode, setAppMode] = useState<AppMode>('work');
+  const [workingDirectory, setWorkingDirectory] = useState<WorkingDirectoryInfo | null>(null);
   const navigate = useNavigate();
 
   // Subscribe to background tasks
@@ -132,6 +133,7 @@ function HomeContent() {
         taskIndex: 1,
         attachments,
         mode: appMode, // Pass current app mode to task
+        workingDirectory, // Pass working directory to task
       },
     });
   };
@@ -157,7 +159,9 @@ function HomeContent() {
           <div className="flex w-full max-w-2xl flex-col items-center gap-6">
             {/* Title */}
             <h1 className="text-foreground text-center font-serif text-4xl font-normal tracking-tight md:text-5xl">
-              {t.home.welcomeTitle}
+              {appMode === 'code'
+                ? t.home.codeWelcomeTitle
+                : t.home.welcomeTitle}
             </h1>
 
             {/* Input Box - Using shared ChatInput component */}
@@ -167,6 +171,9 @@ function HomeContent() {
               onSubmit={handleSubmit}
               className="w-full"
               autoFocus
+              showWorkingDirSelector
+              workingDirectory={workingDirectory}
+              onWorkingDirectoryChange={setWorkingDirectory}
             />
           </div>
         </div>

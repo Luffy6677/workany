@@ -8,10 +8,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MessageAttachment } from '@/shared/hooks/useAgent';
 import { cn } from '@/shared/lib/utils';
+import { storeDirectoryHandle, storeHandleByName } from '@/shared/lib/working-directory-store';
 import { useLanguage } from '@/shared/providers/language-provider';
 import {
   ArrowUp,
+  ChevronDown,
+  Cloud,
   FileText,
+  Folder,
   Paperclip,
   Plus,
   Send,
@@ -34,6 +38,13 @@ export interface Attachment {
   preview?: string; // Data URL for image preview
 }
 
+// Working directory info - supports both path (Tauri) and handle key (Web)
+export interface WorkingDirectoryInfo {
+  name: string;
+  path?: string; // Available in Tauri
+  handleKey?: string; // Key to retrieve FileSystemDirectoryHandle from global store (Web)
+}
+
 export interface ChatInputProps {
   /** Placeholder text */
   placeholder?: string;
@@ -51,6 +62,12 @@ export interface ChatInputProps {
   disabled?: boolean;
   /** Auto focus on mount */
   autoFocus?: boolean;
+  /** Current working directory info (null = Cloud Environment) */
+  workingDirectory?: WorkingDirectoryInfo | null;
+  /** Callback when working directory changes */
+  onWorkingDirectoryChange?: (dir: WorkingDirectoryInfo | null) => void;
+  /** Whether to show working directory selector */
+  showWorkingDirSelector?: boolean;
 }
 
 // Generate unique ID for attachments
@@ -96,6 +113,9 @@ export function ChatInput({
   className,
   disabled = false,
   autoFocus = false,
+  workingDirectory = null,
+  onWorkingDirectoryChange,
+  showWorkingDirSelector = false,
 }: ChatInputProps) {
   const { t } = useLanguage();
   const [value, setValue] = useState('');
@@ -104,6 +124,72 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposingRef = useRef(false);
   const prevIsRunningRef = useRef(isRunning);
+
+  // Check if running in Tauri environment
+  const isTauri = () => {
+    return (
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
+    );
+  };
+
+  // Handle opening folder picker
+  const handleOpenFolder = () => {
+    console.log('[ChatInput] handleOpenFolder called');
+    // Use setTimeout to ensure dropdown closes first before opening dialog
+    setTimeout(async () => {
+      try {
+        if (isTauri()) {
+          // Tauri environment: use native dialog
+          console.log('[ChatInput] Using Tauri dialog');
+          const { open } = await import('@tauri-apps/plugin-dialog');
+          const selected = await open({
+            directory: true,
+            multiple: false,
+            title: t.home.openFolder,
+          });
+          console.log('[ChatInput] Folder selected:', selected);
+          if (selected && typeof selected === 'string') {
+            const folderName = selected.split('/').pop() || selected;
+            onWorkingDirectoryChange?.({
+              name: folderName,
+              path: selected,
+            });
+          }
+        } else {
+          // Web environment: use File System Access API
+          console.log('[ChatInput] Using Web File System Access API');
+          if ('showDirectoryPicker' in window) {
+            const dirHandle = await (window as Window & { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+            console.log('[ChatInput] Directory handle:', dirHandle.name);
+            // Store handle in global store and get key
+            const handleKey = storeDirectoryHandle(dirHandle);
+            // Also store by folder name for persistence (to retrieve later when returning to task)
+            storeHandleByName(dirHandle.name, dirHandle);
+            onWorkingDirectoryChange?.({
+              name: dirHandle.name,
+              handleKey: handleKey,
+            });
+          } else {
+            console.error('[ChatInput] showDirectoryPicker is not supported in this browser');
+            alert('Your browser does not support folder selection. Please use Chrome or Edge.');
+          }
+        }
+      } catch (error) {
+        // User cancelled the dialog
+        if ((error as Error).name === 'AbortError') {
+          console.log('[ChatInput] User cancelled folder selection');
+          return;
+        }
+        console.error('[ChatInput] Failed to open folder picker:', error);
+      }
+    }, 100);
+  };
+
+  // Handle selecting cloud environment
+  const handleSelectCloud = () => {
+    onWorkingDirectoryChange?.(null);
+  };
 
   // Auto focus on mount if autoFocus is true
   useEffect(() => {
@@ -393,8 +479,57 @@ export function ChatInput({
           isHome ? 'mt-3' : 'mt-2'
         )}
       >
-        {/* Add Button with Dropdown */}
-        <div className="flex items-center gap-1">
+        {/* Left side: Working Directory Selector + Add Button */}
+        <div className="flex items-center gap-2">
+          {/* Working Directory Selector */}
+          {showWorkingDirSelector && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger
+                disabled={isRunning || disabled}
+                className={cn(
+                  'flex items-center gap-1.5 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+                  'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground rounded-lg border px-2.5 py-1.5 text-sm'
+                )}
+              >
+                {workingDirectory ? (
+                  <>
+                    <Folder className="size-4" />
+                    <span className="max-w-[120px] truncate">
+                      {workingDirectory.name}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Cloud className="size-4" />
+                    <span>{t.home.cloudEnvironment}</span>
+                  </>
+                )}
+                <ChevronDown className="size-3.5 opacity-50" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                sideOffset={8}
+                className="z-50 w-56"
+              >
+                <DropdownMenuItem
+                  onSelect={handleSelectCloud}
+                  className="cursor-pointer gap-3 py-2.5"
+                >
+                  <Cloud className="size-4" />
+                  <span>{t.home.cloudEnvironment}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={handleOpenFolder}
+                  className="cursor-pointer gap-3 py-2.5"
+                >
+                  <Folder className="size-4" />
+                  <span>{t.home.openFolder}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* Add Button with Dropdown */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger
               disabled={isRunning || disabled}
