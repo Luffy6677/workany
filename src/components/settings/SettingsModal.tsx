@@ -61,12 +61,8 @@ export function SettingsModal({
   const categories: SettingsCategory[] = [
     'account',
     'general',
-    'workplace',
-    'model',
     'mcp',
     'skills',
-    'data',
-    'about',
   ];
 
   const getCategoryLabel = (id: SettingsCategory): string => {
