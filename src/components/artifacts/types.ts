@@ -19,6 +19,9 @@ export type ArtifactType =
   | 'font'
   | 'websearch';
 
+// Platform-specific preview modes
+export type ArtifactPlatform = 'wechat' | 'zhihu' | 'xiaohongshu';
+
 export interface Artifact {
   id: string;
   name: string;
@@ -33,6 +36,8 @@ export interface Artifact {
   fileSize?: number;
   // Flag indicating the file is too large to preview
   fileTooLarge?: boolean;
+  // Platform-specific preview (e.g., 'wechat' for WeChat article preview)
+  platform?: ArtifactPlatform;
 }
 
 export interface ArtifactPreviewProps {

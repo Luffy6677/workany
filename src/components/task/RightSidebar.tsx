@@ -513,11 +513,14 @@ function FileTreeItem({
   depth = 0,
   onSelectFile,
   onSelectArtifact,
+  allArtifacts = [],
 }: {
   file: WorkingFile;
   depth?: number;
   onSelectFile?: (file: WorkingFile) => void;
   onSelectArtifact: (artifact: Artifact) => void;
+  // All artifacts from Write tool - used to find existing artifact with content
+  allArtifacts?: Artifact[];
 }) {
   const [isExpanded, setIsExpanded] = useState(file.isExpanded ?? false);
   const [isLoading, setIsLoading] = useState(false);
@@ -531,6 +534,16 @@ function FileTreeItem({
       onSelectFile(file);
     } else {
       const artifactType = getArtifactTypeByExt(ext);
+
+      // First, check if we already have this artifact with content from Write tool
+      // This ensures we use the actual content written by AI, not potentially stale disk content
+      const existingArtifact = allArtifacts.find(
+        (a) => a.path === file.path && a.content
+      );
+      if (existingArtifact) {
+        onSelectArtifact(existingArtifact);
+        return;
+      }
 
       // For binary/streaming files, don't read content - just pass the path
       if (SKIP_CONTENT_TYPES.includes(artifactType)) {
@@ -645,6 +658,7 @@ function FileTreeItem({
               depth={depth + 1}
               onSelectFile={onSelectFile}
               onSelectArtifact={onSelectArtifact}
+              allArtifacts={allArtifacts}
             />
           ))}
         </div>
@@ -1207,6 +1221,7 @@ export function RightSidebar({
                       file={file}
                       onSelectFile={onSelectWorkingFile}
                       onSelectArtifact={onSelectArtifact}
+                      allArtifacts={artifacts}
                     />
                   ))}
                 </div>
@@ -1406,6 +1421,7 @@ export function RightSidebar({
                     file={{ ...file, isExpanded: false }}
                     onSelectFile={onSelectWorkingFile}
                     onSelectArtifact={onSelectArtifact}
+                    allArtifacts={artifacts}
                   />
                 ))}
               </div>

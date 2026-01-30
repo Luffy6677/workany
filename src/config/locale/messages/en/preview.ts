@@ -36,4 +36,12 @@ export default {
   livePreviewHint:
     'Start a live preview server to see changes in real-time with HMR',
   stopServer: 'Stop server',
+  // WeChat preview
+  wechatPreview: 'WeChat Article Preview',
+  copyToWechat: 'Copy to WeChat',
+  copyToWechatHint: 'Copy as rich text, paste directly into WeChat editor',
+  copiedToWechat: 'Copied!',
+  copyHtml: 'Copy HTML',
+  copyHtmlHint: 'Copy HTML source code',
+  wechatWidthHint: 'Width: 677px (WeChat standard)',
 };

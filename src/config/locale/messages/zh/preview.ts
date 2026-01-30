@@ -34,4 +34,12 @@ export default {
   startPreview: '启动预览',
   livePreviewHint: '启动实时预览服务，实时查看更改（支持 HMR）',
   stopServer: '停止服务',
+  // 微信公众号预览
+  wechatPreview: '微信公众号预览',
+  copyToWechat: '复制到微信',
+  copyToWechatHint: '复制为富文本，可直接粘贴到公众号编辑器',
+  copiedToWechat: '已复制！',
+  copyHtml: '复制 HTML',
+  copyHtmlHint: '复制 HTML 源代码',
+  wechatWidthHint: '宽度：677px（微信标准）',
 };

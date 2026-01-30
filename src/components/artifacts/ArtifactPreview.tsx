@@ -44,11 +44,13 @@ import {
   getFileExtension,
   getOpenWithApp,
   inlineAssets,
+  inlineCssForWechat,
   parseCSV,
   parseFrontmatter,
 } from './utils';
 import { VideoPreview } from './VideoPreview';
 import { WebSearchPreview } from './WebSearchPreview';
+import { WechatPreview } from './WechatPreview';
 
 // Expandable text component for long content
 function ExpandableText({
@@ -158,6 +160,38 @@ export function ArtifactPreview({
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+    }
+  };
+
+  // Handle copy to WeChat (as rich text HTML)
+  const [copiedToWechat, setCopiedToWechat] = useState(false);
+
+  const handleCopyToWechat = async () => {
+    if (!artifact?.content || artifact.type !== 'html') return;
+    try {
+      // Inline CSS styles for WeChat compatibility
+      const inlinedHtml = inlineCssForWechat(artifact.content);
+
+      const htmlBlob = new Blob([inlinedHtml], { type: 'text/html' });
+      const textBlob = new Blob([inlinedHtml], { type: 'text/plain' });
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': htmlBlob,
+          'text/plain': textBlob,
+        }),
+      ]);
+      setCopiedToWechat(true);
+      setTimeout(() => setCopiedToWechat(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy to WeChat:', err);
+      // Fallback to plain text
+      try {
+        await navigator.clipboard.writeText(artifact.content);
+        setCopiedToWechat(true);
+        setTimeout(() => setCopiedToWechat(false), 2000);
+      } catch {
+        console.error('Fallback copy also failed');
+      }
     }
   };
 
@@ -453,6 +487,38 @@ export function ArtifactPreview({
               </Tooltip>
             )}
 
+            {/* Copy to WeChat button for HTML files */}
+            {artifact.type === 'html' && artifact.content && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleCopyToWechat}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                      copiedToWechat
+                        ? 'bg-emerald-500/10 text-emerald-600'
+                        : 'bg-primary/10 text-primary hover:bg-primary/20'
+                    )}
+                  >
+                    {copiedToWechat ? (
+                      <>
+                        <Check className="size-3.5" />
+                        <span>{t.preview.copiedToWechat}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="size-3.5" />
+                        <span>{t.preview.copyToWechat}</span>
+                      </>
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>{t.preview.copyToWechatHint}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -491,9 +557,10 @@ export function ArtifactPreview({
       </div>
 
       {/* View mode toggle - translations handled inline */}
-      {(hasCodeView || (canUseLivePreview && viewMode === 'preview')) && (
+      {(hasCodeView || canUseLivePreview) && (
         <div className="bg-muted/20 border-border/30 flex shrink-0 items-center gap-2 border-b px-4 py-2">
-          {hasPreview && hasCodeView && (
+          {/* For HTML with live preview: show preview/code toggle only (no static/live) */}
+          {hasPreview && hasCodeView && !canUseLivePreview && (
             <div className="bg-muted flex items-center gap-1 rounded-lg p-0.5">
               <button
                 onClick={() => setViewMode('preview')}
@@ -522,22 +589,39 @@ export function ArtifactPreview({
             </div>
           )}
 
-          {canUseLivePreview && viewMode === 'preview' && (
+          {/* For HTML with live preview available: show combined toggle */}
+          {canUseLivePreview && hasCodeView && (
             <div className="bg-muted flex items-center gap-1 rounded-lg p-0.5">
               <button
-                onClick={() => setPreviewMode('static')}
+                onClick={() => {
+                  setViewMode('preview');
+                  setPreviewMode('static');
+                }}
                 className={cn(
                   'flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                  previewMode === 'static'
+                  viewMode === 'preview' && previewMode === 'static'
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 <Eye className="size-3.5" />
-                {t.preview.static}
+                {t.preview.preview}
+              </button>
+              <button
+                onClick={() => setViewMode('code')}
+                className={cn(
+                  'flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                  viewMode === 'code'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Code className="size-3.5" />
+                {t.preview.code}
               </button>
               <button
                 onClick={() => {
+                  setViewMode('preview');
                   setPreviewMode('live');
                   if (livePreviewStatus === 'idle' && onStartLivePreview) {
                     onStartLivePreview();
@@ -545,7 +629,7 @@ export function ArtifactPreview({
                 }}
                 className={cn(
                   'flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                  previewMode === 'live'
+                  viewMode === 'preview' && previewMode === 'live'
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
@@ -669,6 +753,11 @@ function PreviewContent({
         onOpenExternal={handleOpenExternal}
       />
     );
+  }
+
+  // WeChat Article Preview (platform-specific)
+  if (artifact.type === 'html' && artifact.platform === 'wechat') {
+    return <WechatPreview artifact={artifact} />;
   }
 
   // HTML Preview

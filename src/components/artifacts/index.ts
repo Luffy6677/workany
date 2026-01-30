@@ -12,10 +12,12 @@ export { ImagePreview } from './ImagePreview';
 export { PdfPreview } from './PdfPreview';
 export { PptxPreview } from './PptxPreview';
 export { VideoPreview } from './VideoPreview';
+export { WechatPreview } from './WechatPreview';
 
 // Types
 export type {
   Artifact,
+  ArtifactPlatform,
   ArtifactPreviewProps,
   ArtifactType,
   DocxParagraph,
@@ -36,6 +38,7 @@ export {
   getOpenWithApp,
   getVideoMimeType,
   inlineAssets,
+  inlineCssForWechat,
   isRemoteUrl,
   markdownToHtml,
   MAX_PREVIEW_SIZE,

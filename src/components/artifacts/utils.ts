@@ -335,3 +335,95 @@ export function parseFrontmatter(content: string): {
 export function stripFrontmatter(content: string): string {
   return parseFrontmatter(content).content;
 }
+
+/**
+ * Inline CSS styles from <style> tags into elements for WeChat compatibility.
+ * WeChat public account editor only supports inline styles, not <style> tags.
+ */
+export function inlineCssForWechat(html: string): string {
+  // Create a temporary DOM to process
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  // Extract all style tags
+  const styleTags = doc.querySelectorAll('style');
+  const cssRules: { selector: string; styles: string }[] = [];
+
+  styleTags.forEach((styleTag) => {
+    const cssText = styleTag.textContent || '';
+    // Parse CSS rules (simple regex-based parsing)
+    const ruleRegex = /([^{]+)\{([^}]+)\}/g;
+    let match;
+    while ((match = ruleRegex.exec(cssText)) !== null) {
+      const selector = match[1].trim();
+      const styles = match[2]
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/;\s*$/, '');
+      // Skip pseudo-classes, pseudo-elements, @rules, and universal selector
+      if (
+        !selector.includes(':') &&
+        !selector.includes('@') &&
+        !selector.includes('*') &&
+        selector.trim() !== ''
+      ) {
+        // Handle multiple selectors separated by comma
+        selector.split(',').forEach((sel) => {
+          const trimmedSel = sel.trim();
+          if (trimmedSel && !trimmedSel.includes(':')) {
+            cssRules.push({ selector: trimmedSel, styles });
+          }
+        });
+      }
+    }
+  });
+
+  // Apply styles to elements (more specific selectors should come last)
+  // Sort by specificity: element < .class < #id
+  cssRules.sort((a, b) => {
+    const getSpecificity = (sel: string) => {
+      if (sel.startsWith('#')) return 3;
+      if (sel.startsWith('.')) return 2;
+      if (sel.includes('.')) return 2;
+      if (sel.includes('#')) return 3;
+      return 1;
+    };
+    return getSpecificity(a.selector) - getSpecificity(b.selector);
+  });
+
+  cssRules.forEach(({ selector, styles }) => {
+    try {
+      const elements = doc.querySelectorAll(selector);
+      elements.forEach((el) => {
+        const existingStyle = el.getAttribute('style') || '';
+        // Merge styles: new styles first, then existing (existing takes precedence)
+        const mergedStyle = existingStyle
+          ? `${styles}; ${existingStyle}`
+          : styles;
+        el.setAttribute('style', mergedStyle);
+      });
+    } catch {
+      // Invalid selector, skip
+    }
+  });
+
+  // Remove style tags
+  styleTags.forEach((tag) => tag.remove());
+
+  // Remove script tags for safety
+  doc.querySelectorAll('script').forEach((tag) => tag.remove());
+
+  // Remove head tag content
+  const head = doc.querySelector('head');
+  if (head) {
+    head.innerHTML = '';
+  }
+
+  // Get the body content (or full HTML if no body)
+  const body = doc.body;
+  if (body) {
+    // Wrap content in a container with base styles
+    return `<section style="font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', Arial, sans-serif; font-size: 16px; line-height: 1.75; color: #333; word-wrap: break-word;">${body.innerHTML}</section>`;
+  }
+  return html;
+}

@@ -812,6 +812,8 @@ function TaskDetailContent() {
                       phase={phase}
                       onApprovePlan={approvePlan}
                       onRejectPlan={rejectPlan}
+                      onSelectArtifact={handleSelectArtifact}
+                      allArtifacts={artifacts}
                     />
 
                     {isRunning && <RunningIndicator messages={messages} />}
@@ -971,6 +973,8 @@ function MessageList({
   phase,
   onApprovePlan,
   onRejectPlan,
+  onSelectArtifact,
+  allArtifacts = [],
 }: {
   messages: AgentMessage[];
   isRunning: boolean;
@@ -978,6 +982,8 @@ function MessageList({
   phase?: string;
   onApprovePlan?: () => void;
   onRejectPlan?: () => void;
+  onSelectArtifact?: (artifact: Artifact) => void;
+  allArtifacts?: Artifact[];
 }) {
   if (messages.length === 0) {
     return null;
@@ -1213,6 +1219,8 @@ function MessageList({
             phase={phase}
             onApprovePlan={onApprovePlan}
             onRejectPlan={onRejectPlan}
+            onSelectArtifact={onSelectArtifact}
+            allArtifacts={allArtifacts}
           />
         );
       })}
@@ -1322,11 +1330,15 @@ function MessageItem({
   phase,
   onApprovePlan,
   onRejectPlan,
+  onSelectArtifact,
+  allArtifacts = [],
 }: {
   message: AgentMessage;
   phase?: string;
   onApprovePlan?: () => void;
   onRejectPlan?: () => void;
+  onSelectArtifact?: (artifact: Artifact) => void;
+  allArtifacts?: Artifact[];
 }) {
   if (message.type === 'user') {
     return (
@@ -1372,6 +1384,148 @@ function MessageItem({
                 }) => {
                   const isInline = !className;
                   if (isInline) {
+                    // Check if content is a file path
+                    const text =
+                      typeof children === 'string'
+                        ? children
+                        : Array.isArray(children)
+                          ? children.join('')
+                          : '';
+
+                    // File path pattern: starts with / and has extension
+                    const isFilePath =
+                      text.startsWith('/') &&
+                      /\.[a-zA-Z0-9]+$/.test(text);
+
+                    if (isFilePath && onSelectArtifact) {
+                      const fileName = text.split('/').pop() || text;
+                      const ext = fileName.split('.').pop()?.toLowerCase();
+
+                      // Get artifact type based on extension
+                      const getType = (e?: string): Artifact['type'] => {
+                        if (!e) return 'text';
+                        const map: Record<string, Artifact['type']> = {
+                          html: 'html',
+                          htm: 'html',
+                          jsx: 'jsx',
+                          tsx: 'jsx',
+                          css: 'css',
+                          json: 'json',
+                          md: 'markdown',
+                          csv: 'csv',
+                          xlsx: 'spreadsheet',
+                          xls: 'spreadsheet',
+                          pptx: 'presentation',
+                          ppt: 'presentation',
+                          docx: 'document',
+                          doc: 'document',
+                          pdf: 'pdf',
+                          png: 'image',
+                          jpg: 'image',
+                          jpeg: 'image',
+                          gif: 'image',
+                          svg: 'image',
+                          webp: 'image',
+                          mp3: 'audio',
+                          wav: 'audio',
+                          mp4: 'video',
+                          webm: 'video',
+                        };
+                        return map[e] || 'code';
+                      };
+
+                      const artifactType = getType(ext);
+
+                      const handleClick = async () => {
+                        // First, check if we already have this artifact with content from Write tool
+                        // This ensures we use the actual content written by AI, not potentially stale disk content
+                        const existingArtifact = allArtifacts.find(
+                          (a) => a.path === text && a.content
+                        );
+                        if (existingArtifact) {
+                          onSelectArtifact(existingArtifact);
+                          return;
+                        }
+
+                        // Binary files: don't read content
+                        const binaryTypes = [
+                          'image',
+                          'audio',
+                          'video',
+                          'pdf',
+                          'spreadsheet',
+                          'presentation',
+                          'document',
+                        ];
+
+                        if (binaryTypes.includes(artifactType)) {
+                          onSelectArtifact({
+                            id: text,
+                            name: fileName,
+                            type: artifactType,
+                            path: text,
+                          });
+                          return;
+                        }
+
+                        // Text files: try to read content
+                        try {
+                          const { readTextFile } = await import(
+                            '@tauri-apps/plugin-fs'
+                          );
+                          const content = await readTextFile(text);
+                          onSelectArtifact({
+                            id: text,
+                            name: fileName,
+                            type: artifactType,
+                            path: text,
+                            content,
+                          });
+                        } catch (err) {
+                          console.error(
+                            '[MessageItem] Failed to read file:',
+                            err
+                          );
+                          // Try fetch as fallback (for API served files)
+                          try {
+                            const response = await fetch(
+                              `/api/files/read?path=${encodeURIComponent(text)}`
+                            );
+                            if (response.ok) {
+                              const content = await response.text();
+                              onSelectArtifact({
+                                id: text,
+                                name: fileName,
+                                type: artifactType,
+                                path: text,
+                                content,
+                              });
+                              return;
+                            }
+                          } catch {
+                            // Ignore fetch error
+                          }
+                          // Last fallback: just pass path
+                          onSelectArtifact({
+                            id: text,
+                            name: fileName,
+                            type: artifactType,
+                            path: text,
+                          });
+                        }
+                      };
+
+                      return (
+                        <button
+                          onClick={handleClick}
+                          className="bg-muted hover:bg-accent text-primary cursor-pointer rounded px-1.5 py-0.5 text-sm underline-offset-2 hover:underline"
+                          title={text}
+                        >
+                          {fileName}
+                        </button>
+                      );
+                    }
+
                     return (
                       <code
                         className="bg-muted rounded px-1.5 py-0.5 text-sm"
