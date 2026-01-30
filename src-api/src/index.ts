@@ -8,6 +8,7 @@ import {
   filesRoutes,
   healthRoutes,
   mcpRoutes,
+  openaiRoutes,
   previewRoutes,
   providersRoutes,
   sandboxRoutes,
@@ -35,6 +36,9 @@ app.route('/providers', providersRoutes);
 app.route('/files', filesRoutes);
 app.route('/mcp', mcpRoutes);
 
+// OpenAI-compatible API (for ChatterUI and other clients)
+app.route('/', openaiRoutes);
+
 // Root endpoint
 app.get('/', (c) => {
   return c.json({
@@ -48,6 +52,7 @@ app.get('/', (c) => {
       providers: '/providers',
       files: '/files',
       mcp: '/mcp',
+      openai: '/v1/chat/completions',
     },
   });
 });
