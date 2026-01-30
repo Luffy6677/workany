@@ -12,6 +12,7 @@ import {
   previewRoutes,
   providersRoutes,
   sandboxRoutes,
+  sessionsRoutes,
 } from '@/app/api';
 import { corsMiddleware } from '@/app/middleware/index.js';
 import { loadConfig } from '@/config/loader.js';
@@ -20,6 +21,7 @@ import {
   shutdownProviderManager,
 } from '@/shared/provider/manager';
 import { getPreviewManager } from '@/shared/services/preview';
+import { initWebSocket } from '@/shared/services/websocket';
 
 const app = new Hono();
 
@@ -35,6 +37,7 @@ app.route('/preview', previewRoutes);
 app.route('/providers', providersRoutes);
 app.route('/files', filesRoutes);
 app.route('/mcp', mcpRoutes);
+app.route('/sessions', sessionsRoutes);
 
 // OpenAI-compatible API (for ChatterUI and other clients)
 app.route('/', openaiRoutes);
@@ -52,7 +55,9 @@ app.get('/', (c) => {
       providers: '/providers',
       files: '/files',
       mcp: '/mcp',
+      sessions: '/sessions',
       openai: '/v1/chat/completions',
+      websocket: '/ws',
     },
   });
 });
@@ -122,6 +127,10 @@ async function start() {
     fetch: app.fetch,
     port,
   });
+
+  // Initialize WebSocket server
+  initWebSocket(server);
+  console.log(`🔌 WebSocket server available at ws://localhost:${port}/ws`);
 }
 
 start().catch((error) => {

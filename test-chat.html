@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorkAny - Multi-Session Chat</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a;
+      color: #eee;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Layout */
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 280px;
+      background: #1a1a2e;
+      border-right: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sidebar-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .new-btn {
+      background: #0f4c75;
+      border: none;
+      color: white;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .new-btn:hover { background: #1a6fa8; }
+
+    .session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .session-item {
+      padding: 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      position: relative;
+    }
+
+    .session-item:hover { background: #252540; }
+    .session-item.active { background: #0f4c75; }
+
+    .session-item .title {
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-right: 20px;
+    }
+
+    .session-item .meta {
+      font-size: 12px;
+      color: #888;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .session-item .status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status.idle { background: #27ae60; }
+    .status.running { background: #3498db; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .session-item .delete-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: transparent;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      opacity: 0;
+      font-size: 16px;
+    }
+
+    .session-item:hover .delete-btn { opacity: 1; }
+    .session-item .delete-btn:hover { color: #e74c3c; }
+
+    /* Main Chat Area */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #16213e;
+    }
+
+    .chat-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chat-header h2 {
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    .connection-status {
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .connection-status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .connection-status .dot.connected { background: #27ae60; }
+    .connection-status .dot.disconnected { background: #e74c3c; }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .message {
+      margin: 12px 0;
+      padding: 12px 16px;
+      border-radius: 12px;
+      max-width: 80%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message.user {
+      background: #0f4c75;
+      margin-left: auto;
+    }
+
+    .message.assistant {
+      background: #1b4332;
+    }
+
+    .message.tool {
+      background: #3d3d00;
+      font-size: 13px;
+      color: #f1c40f;
+    }
+
+    .message.error {
+      background: #4a1a1a;
+      color: #e74c3c;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #666;
+    }
+
+    .empty-state .icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    /* Input Area */
+    .input-area {
+      padding: 16px 20px;
+      border-top: 1px solid #333;
+      display: flex;
+      gap: 12px;
+    }
+
+    .input-area input {
+      flex: 1;
+      padding: 14px 16px;
+      border: 1px solid #333;
+      border-radius: 12px;
+      background: #1a1a2e;
+      color: #fff;
+      font-size: 15px;
+    }
+
+    .input-area input:focus {
+      outline: none;
+      border-color: #0f4c75;
+    }
+
+    .input-area input:disabled {
+      background: #252540;
+      color: #666;
+    }
+
+    .input-area button {
+      padding: 14px 24px;
+      background: #0f4c75;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .input-area button:hover { background: #1a6fa8; }
+    .input-area button:disabled { background: #444; cursor: not-allowed; }
+
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+      .sidebar {
+        position: absolute;
+        left: -280px;
+        height: 100%;
+        z-index: 100;
+        transition: left 0.3s;
+      }
+
+      .sidebar.open { left: 0; }
+
+      .menu-btn {
+        display: block !important;
+      }
+    }
+
+    .menu-btn {
+      display: none;
+      background: transparent;
+      border: none;
+      color: white;
+      font-size: 24px;
+      cursor: pointer;
+      margin-right: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h1>WorkAny</h1>
+        <button class="new-btn" onclick="createNewSession()" title="New Session">+</button>
+      </div>
+      <div class="session-list" id="sessionList">
+        <!-- Sessions will be rendered here -->
+      </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="main">
+      <div class="chat-header">
+        <div style="display: flex; align-items: center;">
+          <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+          <h2 id="chatTitle">Select a session</h2>
+        </div>
+        <div class="connection-status">
+          <span class="dot" id="wsStatus"></span>
+          <span id="wsStatusText">Connecting...</span>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-state" id="emptyState">
+          <div class="icon">💬</div>
+          <p>Select a session or create a new one</p>
+        </div>
+      </div>
+
+      <div class="input-area">
+        <input type="text" id="input" placeholder="Type a message..." disabled />
+        <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const API_URL = 'http://localhost:2026';
+    const WS_URL = 'ws://localhost:2026/ws';
+
+    let ws = null;
+    let sessions = [];
+    let currentSessionId = null;
+    let isStreaming = false;
+
+    // ========================================
+    // WebSocket
+    // ========================================
+
+    function connectWebSocket() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        console.log('[WS] Connected');
+        updateConnectionStatus(true);
+        // Subscribe to all session updates
+        ws.send(JSON.stringify({ type: 'subscribe-all' }));
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWSMessage(data);
+      };
+
+      ws.onclose = () => {
+        console.log('[WS] Disconnected');
+        updateConnectionStatus(false);
+        // Reconnect after 3 seconds
+        setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = (error) => {
+        console.error('[WS] Error:', error);
+      };
+    }
+
+    function handleWSMessage(data) {
+      console.log('[WS] Message:', data);
+
+      switch (data.type) {
+        case 'session:running':
+        case 'session:idle':
+          updateSessionStatus(data.sessionId, data.type === 'session:running' ? 'running' : 'idle');
+          break;
+
+        case 'session:message':
+          // If this is the current session and message is from another client
+          if (data.sessionId === currentSessionId && !isStreaming) {
+            addMessageToChat(data.message.role, data.message.content);
+          }
+          break;
+
+        case 'session:deleted':
+          removeSessionFromList(data.sessionId);
+          if (data.sessionId === currentSessionId) {
+            currentSessionId = null;
+            showEmptyState();
+          }
+          break;
+      }
+    }
+
+    function updateConnectionStatus(connected) {
+      const dot = document.getElementById('wsStatus');
+      const text = document.getElementById('wsStatusText');
+      dot.className = 'dot ' + (connected ? 'connected' : 'disconnected');
+      text.textContent = connected ? 'Connected' : 'Disconnected';
+    }
+
+    // ========================================
+    // Sessions
+    // ========================================
+
+    async function loadSessions() {
+      try {
+        const res = await fetch(`${API_URL}/sessions`);
+        const data = await res.json();
+        sessions = data.sessions || [];
+        renderSessionList();
+      } catch (error) {
+        console.error('Failed to load sessions:', error);
+      }
+    }
+
+    function renderSessionList() {
+      const list = document.getElementById('sessionList');
+
+      if (sessions.length === 0) {
+        list.innerHTML = '<div style="padding: 20px; color: #666; text-align: center;">No sessions yet</div>';
+        return;
+      }
+
+      list.innerHTML = sessions.map(s => `
+        <div class="session-item ${s.id === currentSessionId ? 'active' : ''}"
+             onclick="selectSession('${s.id}')">
+          <div class="title">${escapeHtml(s.title)}</div>
+          <div class="meta">
+            <span class="status ${s.status}"></span>
+            <span>${s.messageCount} messages</span>
+            <span>${formatTime(s.updatedAt)}</span>
+          </div>
+          <button class="delete-btn" onclick="deleteSession('${s.id}', event)">×</button>
+        </div>
+      `).join('');
+    }
+
+    async function selectSession(id) {
+      currentSessionId = id;
+      renderSessionList();
+
+      try {
+        const res = await fetch(`${API_URL}/sessions/${id}`);
+        const data = await res.json();
+
+        if (data.session) {
+          document.getElementById('chatTitle').textContent = data.session.title;
+          renderMessages(data.session.messages);
+          enableInput(data.session.status === 'idle');
+        }
+      } catch (error) {
+        console.error('Failed to load session:', error);
+      }
+    }
+
+    async function createNewSession() {
+      const id = 'session-' + Date.now();
+      currentSessionId = id;
+
+      // Add to local list immediately
+      sessions.unshift({
+        id,
+        title: 'New Session',
+        status: 'idle',
+        messageCount: 0,
+        updatedAt: new Date().toISOString()
+      });
+
+      renderSessionList();
+      document.getElementById('chatTitle').textContent = 'New Session';
+      document.getElementById('chatMessages').innerHTML = '';
+      document.getElementById('emptyState')?.remove();
+      enableInput(true);
+      document.getElementById('input').focus();
+    }
+
+    async function deleteSession(id, event) {
+      event.stopPropagation();
+
+      if (!confirm('Delete this session?')) return;
+
+      try {
+        await fetch(`${API_URL}/sessions/${id}`, { method: 'DELETE' });
+        removeSessionFromList(id);
+
+        if (id === currentSessionId) {
+          currentSessionId = null;
+          showEmptyState();
+        }
+      } catch (error) {
+        console.error('Failed to delete session:', error);
+      }
+    }
+
+    function removeSessionFromList(id) {
+      sessions = sessions.filter(s => s.id !== id);
+      renderSessionList();
+    }
+
+    function updateSessionStatus(id, status) {
+      const session = sessions.find(s => s.id === id);
+      if (session) {
+        session.status = status;
+        renderSessionList();
+
+        if (id === currentSessionId) {
+          enableInput(status === 'idle');
+        }
+      }
+    }
+
+    // ========================================
+    // Messages
+    // ========================================
+
+    function renderMessages(messages) {
+      const container = document.getElementById('chatMessages');
+      container.innerHTML = messages.map(m => `
+        <div class="message ${m.role}">${escapeHtml(m.content)}</div>
+      `).join('');
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function addMessageToChat(role, content) {
+      const container = document.getElementById('chatMessages');
+      const div = document.createElement('div');
+      div.className = `message ${role}`;
+      div.textContent = content;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+      return div;
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('input');
+      const content = input.value.trim();
+
+      if (!content || !currentSessionId) return;
+
+      input.value = '';
+      enableInput(false);
+      isStreaming = true;
+
+      // Add user message
+      addMessageToChat('user', content);
+
+      // Update local session
+      const session = sessions.find(s => s.id === currentSessionId);
+      if (session) {
+        session.status = 'running';
+        session.messageCount++;
+        if (session.title === 'New Session') {
+          session.title = content.substring(0, 50);
+          document.getElementById('chatTitle').textContent = session.title;
+        }
+        renderSessionList();
+      }
+
+      // Create assistant message container for streaming
+      const assistantDiv = addMessageToChat('assistant', '');
+      let fullContent = '';
+
+      try {
+        const res = await fetch(`${API_URL}/sessions/${currentSessionId}/message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content })
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const jsonStr = line.slice(5).trim();
+              if (!jsonStr) continue;
+
+              try {
+                const event = JSON.parse(jsonStr);
+
+                switch (event.type || line.split(':')[0]?.replace('event', '').trim()) {
+                  case 'text':
+                    if (event.content) {
+                      fullContent += event.content;
+                      assistantDiv.textContent = fullContent;
+                    }
+                    break;
+                  case 'tool':
+                    // Show tool usage
+                    const toolDiv = document.createElement('div');
+                    toolDiv.className = 'message tool';
+                    toolDiv.textContent = `🔧 ${event.name}`;
+                    assistantDiv.parentNode.insertBefore(toolDiv, assistantDiv);
+                    break;
+                  case 'error':
+                    assistantDiv.className = 'message error';
+                    assistantDiv.textContent = `Error: ${event.message}`;
+                    break;
+                }
+              } catch (e) {
+                // Skip invalid JSON
+              }
+            }
+
+            // Handle SSE event format
+            if (line.startsWith('event:')) {
+              // Event type is on this line, data on next
+            }
+          }
+
+          // Scroll to bottom
+          const container = document.getElementById('chatMessages');
+          container.scrollTop = container.scrollHeight;
+        }
+
+      } catch (error) {
+        console.error('Failed to send message:', error);
+        assistantDiv.className = 'message error';
+        assistantDiv.textContent = `Error: ${error.message}`;
+      }
+
+      isStreaming = false;
+      enableInput(true);
+
+      // Update session
+      if (session) {
+        session.status = 'idle';
+        session.messageCount++;
+        session.updatedAt = new Date().toISOString();
+        renderSessionList();
+      }
+    }
+
+    // ========================================
+    // UI Helpers
+    // ========================================
+
+    function enableInput(enabled) {
+      document.getElementById('input').disabled = !enabled;
+      document.getElementById('sendBtn').disabled = !enabled;
+
+      if (enabled) {
+        document.getElementById('input').placeholder = 'Type a message...';
+      } else {
+        document.getElementById('input').placeholder = 'Waiting...';
+      }
+    }
+
+    function showEmptyState() {
+      document.getElementById('chatTitle').textContent = 'Select a session';
+      document.getElementById('chatMessages').innerHTML = `
+        <div class="empty-state">
+          <div class="icon">💬</div>
+          <p>Select a session or create a new one</p>
+        </div>
+      `;
+      enableInput(false);
+    }
+
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open');
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function formatTime(isoString) {
+      const date = new Date(isoString);
+      const now = new Date();
+      const diff = now - date;
+
+      if (diff < 60000) return 'just now';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return date.toLocaleDateString();
+    }
+
+    // ========================================
+    // Event Listeners
+    // ========================================
+
+    document.getElementById('input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && !document.getElementById('sendBtn').disabled) {
+        sendMessage();
+      }
+    });
+
+    // Close sidebar on mobile when clicking outside
+    document.querySelector('.main').addEventListener('click', () => {
+      document.getElementById('sidebar').classList.remove('open');
+    });
+
+    // ========================================
+    // Initialize
+    // ========================================
+
+    async function init() {
+      await loadSessions();
+      connectWebSocket();
+    }
+
+    init();
+  </script>
+</body>
+</html>

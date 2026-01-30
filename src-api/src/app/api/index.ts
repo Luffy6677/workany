@@ -6,3 +6,4 @@ export { providersRoutes } from './providers.js';
 export { filesRoutes } from './files.js';
 export { mcpRoutes } from './mcp.js';
 export { openaiRoutes } from './openai.js';
+export { sessionsRoutes } from './sessions.js';
