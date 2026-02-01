@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "ver": "./scripts/version.sh",
+    "chrome": "./scripts/start-chrome.sh",
     "dev": "vite",
     "dev:api": "pnpm --filter workany-api dev",
     "predev:app": "node scripts/check-rust.js",

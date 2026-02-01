@@ -3,6 +3,11 @@
  *
  * Provides /v1/chat/completions endpoint for compatibility with
  * OpenAI-compatible clients like ChatterUI.
+ *
+ * Supports verbose levels via model name suffix or request parameter:
+ * - workany-quiet: verbose=off (hide tool calls, human-like conversation)
+ * - workany: verbose=on (show tool summaries)
+ * - workany-verbose: verbose=full (show tool summaries + outputs)
  */
 
 import { Hono } from 'hono';
@@ -14,13 +19,81 @@ import {
   type AgentMessage,
 } from '@/shared/services/agent';
 
+import {
+  type VerboseLevel,
+  shouldEmitMessage,
+  formatToolSummary,
+  formatToolOutput,
+  extractVerboseFromModel,
+  stripVerboseSuffix,
+  parseVerboseLevel,
+} from '@/shared/utils/tool-display';
+
 const openai = new Hono();
 
-// Helper to create SSE stream with OpenAI format
+// ============================================================================
+// Message Formatting
+// ============================================================================
+
+/**
+ * Format an agent message based on verbose level
+ * Returns empty string if message should be skipped
+ */
+function formatMessageContent(
+  message: AgentMessage,
+  verboseLevel: VerboseLevel
+): string {
+  // Check if this message type should be emitted
+  if (!shouldEmitMessage(message.type, verboseLevel)) {
+    return '';
+  }
+
+  switch (message.type) {
+    case 'text':
+      return message.content || '';
+
+    case 'tool_use':
+      // Format as concise summary: "🛠️ Bash: ls -la ~/Documents"
+      return `\n${formatToolSummary(message.name, message.input)}\n`;
+
+    case 'tool_result':
+      // Only shown in 'full' mode (already checked by shouldEmitMessage)
+      if (message.isError) {
+        return `\n${formatToolOutput(message.name, message.output, true)}\n`;
+      }
+      return `\n${formatToolOutput(message.name, message.output, false)}\n`;
+
+    case 'plan':
+      if (message.plan) {
+        let content = `\n📋 **Plan: ${message.plan.goal}**\n`;
+        message.plan.steps?.forEach((step, i) => {
+          content += `${i + 1}. ${step.description}\n`;
+        });
+        content += '\n';
+        return content;
+      }
+      return '';
+
+    case 'error':
+      return `\n❌ Error: ${message.message}\n`;
+
+    default:
+      return '';
+  }
+}
+
+// ============================================================================
+// SSE Stream Creation
+// ============================================================================
+
+/**
+ * Create SSE stream with OpenAI format, respecting verbose level
+ */
 function createOpenAIStream(
   generator: AsyncGenerator<AgentMessage>,
   runId: string,
-  model: string
+  model: string,
+  verboseLevel: VerboseLevel
 ) {
   const encoder = new TextEncoder();
 
@@ -43,49 +116,21 @@ function createOpenAIStream(
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(roleChunk)}\n\n`));
           }
 
-          // Convert workany message to OpenAI chunk
-          let content = '';
-
-          switch (message.type) {
-            case 'text':
-              content = message.content || '';
-              break;
-            case 'tool_use':
-              content = `\n🔧 Using tool: ${message.name}\n`;
-              break;
-            case 'tool_result':
-              // Skip tool results in stream, or show brief summary
-              if (message.isError) {
-                content = `\n❌ Tool error: ${message.output || 'Unknown error'}\n`;
-              }
-              break;
-            case 'plan':
-              if (message.plan) {
-                content = `\n📋 **Plan: ${message.plan.goal}**\n`;
-                message.plan.steps?.forEach((step, i) => {
-                  content += `${i + 1}. ${step.description}\n`;
-                });
-                content += '\n';
-              }
-              break;
-            case 'error':
-              content = `\n❌ Error: ${message.message}\n`;
-              break;
-            case 'done':
-              // Send finish reason
-              const doneChunk = {
-                id: runId,
-                object: 'chat.completion.chunk',
-                created: Math.floor(Date.now() / 1000),
-                model,
-                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-              };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneChunk)}\n\n`));
-              continue;
-            default:
-              // Skip other message types
-              continue;
+          // Handle done message specially
+          if (message.type === 'done') {
+            const doneChunk = {
+              id: runId,
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneChunk)}\n\n`));
+            continue;
           }
+
+          // Format message based on verbose level
+          const content = formatMessageContent(message, verboseLevel);
 
           if (content) {
             const chunk = {
@@ -120,6 +165,10 @@ function createOpenAIStream(
     },
   });
 }
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
 // Extract user message from OpenAI messages array
 function extractUserMessage(messages: Array<{ role: string; content: unknown }>): string {
@@ -163,6 +212,32 @@ function buildConversation(messages: Array<{ role: string; content: unknown }>) 
     }));
 }
 
+/**
+ * Resolve verbose level from request
+ * Priority: explicit parameter > model suffix > header > default (off)
+ *
+ * Default is 'off' for mobile-friendly output (hide tool calls)
+ */
+function resolveVerboseLevel(
+  model: string,
+  explicitVerbose?: unknown,
+  header?: string | null
+): VerboseLevel {
+  // 1. Explicit parameter in request body
+  if (explicitVerbose !== undefined) {
+    return parseVerboseLevel(explicitVerbose);
+  }
+
+  // 2. HTTP header (allows override)
+  if (header) {
+    return parseVerboseLevel(header);
+  }
+
+  // 3. Model name suffix (e.g., workany-quiet, workany-on, workany-verbose)
+  // Default is 'off' if no suffix specified
+  return extractVerboseFromModel(model);
+}
+
 // SSE Response headers
 const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',
@@ -171,6 +246,10 @@ const SSE_HEADERS = {
   'X-Accel-Buffering': 'no',
   'Access-Control-Allow-Origin': '*',
 };
+
+// ============================================================================
+// API Endpoints
+// ============================================================================
 
 /**
  * POST /v1/chat/completions
@@ -184,10 +263,19 @@ openai.post('/v1/chat/completions', async (c) => {
     temperature?: number;
     max_tokens?: number;
     user?: string;
+    // Custom extension for verbose level
+    verbose?: string | boolean;
   }>();
 
+  const rawModel = body.model || 'workany';
+  const verboseHeader = c.req.header('X-Verbose-Level');
+  const verboseLevel = resolveVerboseLevel(rawModel, body.verbose, verboseHeader);
+  const model = stripVerboseSuffix(rawModel);
+
   console.log('[OpenAI API] POST /v1/chat/completions received:', {
-    model: body.model,
+    model: rawModel,
+    effectiveModel: model,
+    verboseLevel,
     messageCount: body.messages?.length || 0,
     stream: body.stream,
   });
@@ -205,7 +293,6 @@ openai.post('/v1/chat/completions', async (c) => {
     }, 400);
   }
 
-  const model = body.model || 'workany';
   const stream = body.stream !== false; // Default to streaming
   const runId = `chatcmpl-${nanoid()}`;
 
@@ -217,6 +304,7 @@ openai.post('/v1/chat/completions', async (c) => {
     promptLength: userMessage.length,
     conversationLength: conversation.length,
     sessionId: session.id,
+    verboseLevel,
   });
 
   if (!stream) {
@@ -225,16 +313,8 @@ openai.post('/v1/chat/completions', async (c) => {
       let fullContent = '';
 
       for await (const message of runAgent(userMessage, session, conversation)) {
-        if (message.type === 'text') {
-          fullContent += message.content || '';
-        } else if (message.type === 'plan' && message.plan) {
-          fullContent += `\n📋 **Plan: ${message.plan.goal}**\n`;
-          message.plan.steps?.forEach((step, i) => {
-            fullContent += `${i + 1}. ${step.description}\n`;
-          });
-        } else if (message.type === 'error') {
-          fullContent += `\n❌ Error: ${message.message}\n`;
-        }
+        const content = formatMessageContent(message, verboseLevel);
+        fullContent += content;
       }
 
       return c.json({
@@ -265,7 +345,7 @@ openai.post('/v1/chat/completions', async (c) => {
 
   // Streaming response
   const generator = runAgent(userMessage, session, conversation);
-  const readable = createOpenAIStream(generator, runId, model);
+  const readable = createOpenAIStream(generator, runId, model, verboseLevel);
 
   return new Response(readable, { headers: SSE_HEADERS });
 });
@@ -286,15 +366,27 @@ openai.get('/v1/models', (c) => {
         permission: [],
         root: 'workany',
         parent: null,
+        description: 'WorkAny agent (verbose: on)',
       },
       {
-        id: 'workany-agent',
+        id: 'workany-quiet',
         object: 'model',
         created: Math.floor(Date.now() / 1000),
         owned_by: 'workany',
         permission: [],
-        root: 'workany-agent',
+        root: 'workany',
         parent: null,
+        description: 'WorkAny agent (verbose: off, human-like conversation)',
+      },
+      {
+        id: 'workany-verbose',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'workany',
+        permission: [],
+        root: 'workany',
+        parent: null,
+        description: 'WorkAny agent (verbose: full, includes tool outputs)',
       },
     ],
   });
@@ -306,6 +398,7 @@ openai.get('/v1/models', (c) => {
  */
 openai.get('/v1/models/:model', (c) => {
   const modelId = c.req.param('model');
+  const baseModel = stripVerboseSuffix(modelId);
 
   return c.json({
     id: modelId,
@@ -313,7 +406,7 @@ openai.get('/v1/models/:model', (c) => {
     created: Math.floor(Date.now() / 1000),
     owned_by: 'workany',
     permission: [],
-    root: modelId,
+    root: baseModel,
     parent: null,
   });
 });
